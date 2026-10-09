@@ -213,15 +213,44 @@ describe('authentication', () => {
 });
 
 describe('password reset', () => {
-  it('issues a single-use token that cannot be replayed', async () => {
-    const request = await app.inject({
+  /** Stands in for the emailed link: the API never hands a reset token to the caller. */
+  async function issueResetToken(email: string): Promise<string> {
+    const { db } = await import('../src/db/client.js');
+    const { users, passwordResetTokens } = await import('../src/db/schema/index.js');
+    const { generateToken, hashToken } = await import('../src/core/crypto.js');
+    const { eq } = await import('drizzle-orm');
+    const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    const token = generateToken(32);
+    await db.insert(passwordResetTokens).values({
+      userId: user!.id,
+      tokenHash: hashToken(token),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    });
+    return token;
+  }
+
+  // Regression: with no email transport the token came back in this response, so
+  // anyone who knew a staff address could reset that account and sign in as them.
+  it('never hands the reset token to the caller', async () => {
+    const known = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/forgot-password',
       payload: { email: 'manager@test.local' },
     });
-    expect(request.statusCode).toBe(200);
-    const token = request.json().token as string;
-    expect(token).toBeTruthy();
+    expect(known.statusCode).toBe(200);
+    expect(known.json().token).toBeUndefined();
+
+    // Identical for a real and an unknown address, so it cannot find real staff.
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/forgot-password',
+      payload: { email: 'does-not-exist@test.local' },
+    });
+    expect(unknown.json()).toEqual(known.json());
+  });
+
+  it('issues a single-use token that cannot be replayed', async () => {
+    const token = await issueResetToken('manager@test.local');
 
     const first = await app.inject({
       method: 'POST',
@@ -242,12 +271,7 @@ describe('password reset', () => {
   });
 
   it('rejects a new password built from the account identity', async () => {
-    const request = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/forgot-password',
-      payload: { email: 'cashier@test.local' },
-    });
-    const token = request.json().token as string;
+    const token = await issueResetToken('cashier@test.local');
 
     const weak = await app.inject({
       method: 'POST',
@@ -256,16 +280,6 @@ describe('password reset', () => {
       payload: { token, newPassword: 'cashier-password-2026' },
     });
     expect(weak.statusCode).toBe(400);
-  });
-
-  it('does not reveal whether an address exists', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/forgot-password',
-      payload: { email: 'does-not-exist@test.local' },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(response.json().token).toBeUndefined();
   });
 });
 

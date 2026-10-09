@@ -98,24 +98,6 @@ function Users() {
                             Unlock
                           </button>
                         )}
-                        <button
-                          className="btn ghost"
-                          style={btnSmall}
-                          onClick={() =>
-                            void run(
-                              () => api.post<{ temporaryPassword: string }>(`/admin/users/${user.id}/reset-password`),
-                              {
-                                onDone: (result) => {
-                                  // Shown once; it is never stored in the clear.
-                                  if (result) window.prompt('Temporary password (copy it now):', result.temporaryPassword);
-                                  void reload();
-                                },
-                              },
-                            )
-                          }
-                        >
-                          Reset password
-                        </button>
                       </>
                     )}
                   </td>

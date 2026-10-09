@@ -273,13 +273,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } },
     async (request, reply) => {
       const input = parseBody(request, z.object({ email: z.string().trim().toLowerCase().email().max(254) }));
-      const result = await requestPasswordReset(request, input.email);
+      await requestPasswordReset(request, input.email);
       // Identical response either way, so this cannot be used to discover which
       // email addresses belong to real staff.
       return reply.send({
         ok: true,
         message: 'If that address belongs to an active account, a reset has been issued.',
-        ...(result.token ? { token: result.token, expiresAt: result.expiresAt } : {}),
       });
     },
   );

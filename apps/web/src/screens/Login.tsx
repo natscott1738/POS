@@ -225,7 +225,6 @@ function PasswordForm({
 function ForgotPassword({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -233,11 +232,9 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
   async function request(): Promise<void> {
     setBusy(true);
     try {
-      const result = await api.post<{ token?: string }>('/auth/forgot-password', { email });
+      // The code arrives by email only; the API never returns it to this screen.
+      await api.post('/auth/forgot-password', { email });
       setSent(true);
-      // Returned only where no delivery channel is configured, so a manager can
-      // read the code out. Never shown once email is wired up.
-      if (result.token) setToken(result.token);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Request failed');
     } finally {
@@ -248,7 +245,7 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
   async function complete(): Promise<void> {
     setBusy(true);
     try {
-      await api.post('/auth/reset-password', { token: resetToken || token, newPassword });
+      await api.post('/auth/reset-password', { token: resetToken, newPassword });
       toast.success('Password updated. Please sign in.');
       onBack();
     } catch (err) {
@@ -281,21 +278,10 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
       <div className="banner warning">
         If that address belongs to an active account, a reset has been issued. It expires in 30 minutes.
       </div>
-      {token && (
-        <div className="field">
-          <label className="label" htmlFor="reset-code-shown">Reset code</label>
-          <input id="reset-code-shown" className="input mono" readOnly value={token} style={{ fontSize: 12 }} />
-          <span className="muted" style={{ fontSize: 12 }}>
-            No email is configured, so the code is shown here. Set up alerting to deliver these properly.
-          </span>
-        </div>
-      )}
-      {!token && (
-        <div className="field">
-          <label className="label" htmlFor="reset-code">Reset code</label>
-          <input id="reset-code" className="input mono" value={resetToken} onChange={(e) => setResetToken(e.target.value.trim())} autoFocus />
-        </div>
-      )}
+      <div className="field">
+        <label className="label" htmlFor="reset-code">Reset code</label>
+        <input id="reset-code" className="input mono" value={resetToken} onChange={(e) => setResetToken(e.target.value.trim())} autoFocus />
+      </div>
       <div className="field">
         <label className="label" htmlFor="new-password">New password</label>
         <input
@@ -310,7 +296,7 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
       </div>
       <button
         className="btn primary block lg"
-        disabled={busy || newPassword.length < 12 || !(resetToken || token)}
+        disabled={busy || newPassword.length < 12 || !resetToken}
         onClick={() => void complete()}
       >
         {busy ? 'Saving…' : 'Set new password'}

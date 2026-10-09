@@ -16,21 +16,27 @@ const TOKEN_TTL_MS = 30 * 60 * 1000;
  * Starts a password reset.
  *
  * Always reports success, whether or not the address exists — otherwise this
- * endpoint becomes a way to enumerate which staff emails are real. The token is
- * returned to the caller only when there is no delivery channel configured, so a
- * small shop without email can still use the feature via an administrator.
+ * endpoint becomes a way to enumerate which staff emails are real.
+ *
+ * The token only ever leaves by email. This endpoint is unauthenticated, so
+ * returning the token to the caller would let anyone who knows a staff address
+ * reset that account and sign in as them. Without an email transport no token is
+ * issued at all, and recovery goes through an administrator instead
+ * (`POST /admin/users/:id/reset-password`).
  */
-export async function requestPasswordReset(
-  request: FastifyRequest,
-  email: string,
-): Promise<{ token?: string; expiresAt?: Date }> {
+export async function requestPasswordReset(request: FastifyRequest, email: string): Promise<void> {
+  if (!emailConfigured()) {
+    request.log.warn('password reset requested, but no email transport is configured to deliver it');
+    return;
+  }
+
   const [user] = await db
     .select({ id: users.id, isActive: users.isActive, deletedAt: users.deletedAt })
     .from(users)
     .where(eq(users.email, email))
     .limit(1);
 
-  if (!user || !user.isActive || user.deletedAt) return {};
+  if (!user || !user.isActive || user.deletedAt) return;
 
   // Rate limit per account: a flood of reset mails is its own kind of attack.
   const [recent] = await db
@@ -42,7 +48,7 @@ export async function requestPasswordReset(
         gte(passwordResetTokens.createdAt, sql`now() - interval '1 hour'`),
       ),
     );
-  if ((recent?.count ?? 0) >= 5) return {};
+  if ((recent?.count ?? 0) >= 5) return;
 
   // Any outstanding token is invalidated: only the newest link should work.
   await db
@@ -68,32 +74,25 @@ export async function requestPasswordReset(
 
   // Delivery depends on an actual email transport, not on operator alerting: a
   // Slack webhook for engineers cannot deliver a reset link to a cashier.
-  if (emailConfigured()) {
-    const link = `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/reset-password?token=${token}`;
-    const result = await sendEmail({
-      to: email,
-      subject: 'Reset your POS password',
-      text: [
-        'A password reset was requested for your point-of-sale account.',
-        '',
-        `Open this link to choose a new password: ${link}`,
-        '',
-        'The link expires in 30 minutes and can only be used once.',
-        'If you did not request this, you can ignore this message — nothing has changed.',
-      ].join('\n'),
-    });
+  const link = `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/reset-password?token=${token}`;
+  const result = await sendEmail({
+    to: email,
+    subject: 'Reset your POS password',
+    text: [
+      'A password reset was requested for your point-of-sale account.',
+      '',
+      `Open this link to choose a new password: ${link}`,
+      '',
+      'The link expires in 30 minutes and can only be used once.',
+      'If you did not request this, you can ignore this message — nothing has changed.',
+    ].join('\n'),
+  });
 
-    if (!result.sent) {
-      request.log.error({ error: result.error, provider: result.provider }, 'password reset email failed');
-      // Fall through to returning the token so the person is not stranded by an
-      // email outage; an administrator can read it out instead.
-      return { token, expiresAt };
-    }
-    return { expiresAt };
+  if (!result.sent) {
+    // The token is not handed back as a fallback: the caller is anonymous. It
+    // expires unused, and an administrator can reset the password instead.
+    request.log.error({ error: result.error, provider: result.provider }, 'password reset email failed');
   }
-
-  // No email transport: the token is returned so an administrator can pass it on.
-  return { token, expiresAt };
 }
 
 /** Completes a reset. The token is consumed whether or not the password is accepted. */
