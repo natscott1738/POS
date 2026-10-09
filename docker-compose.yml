@@ -1,0 +1,92 @@
+# Single-store deployment. For multiple outlets, run one API + web per site
+# against a shared managed Postgres, or run this stack per site with replication.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-pos}
+      # Deterministic collation so ORDER BY does not change under a base-image bump.
+      POSTGRES_INITDB_ARGS: "--data-checksums --locale=C --encoding=UTF8"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Not published: only the API reaches the database.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pos} -d ${POSTGRES_DB:-pos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # Config comes from the orchestrator; never from a file inside the image.
+      SKIP_DOTENV: "true"
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pos}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?BACKUP_ENCRYPTION_KEY is required}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      COOKIE_SECURE: "true"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BACKUP_DIR: /app/backups
+      MPESA_ENABLED: ${MPESA_ENABLED:-false}
+      MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
+      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+      MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
+      MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+      MPESA_CALLBACK_TOKEN: ${MPESA_CALLBACK_TOKEN:-}
+      MPESA_ALLOWED_IPS: ${MPESA_ALLOWED_IPS:-}
+      PDQ_ENABLED: ${PDQ_ENABLED:-false}
+      PDQ_PROVIDER: ${PDQ_PROVIDER:-ECR_HTTP}
+      PDQ_CALLBACK_TOKEN: ${PDQ_CALLBACK_TOKEN:-}
+      QB_ENABLED: ${QB_ENABLED:-false}
+      QB_ENVIRONMENT: ${QB_ENVIRONMENT:-sandbox}
+      QB_CLIENT_ID: ${QB_CLIENT_ID:-}
+      QB_CLIENT_SECRET: ${QB_CLIENT_SECRET:-}
+      QB_REDIRECT_URI: ${QB_REDIRECT_URI:-}
+    volumes:
+      - backups:/app/backups
+    expose:
+      - "4000"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      # Terminate TLS in front of this (a reverse proxy or load balancer).
+      - "${WEB_PORT:-8080}:8080"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  db-data:
+  backups:

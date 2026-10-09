@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+# A superseded run has nothing useful left to say.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  verify:
+    name: Typecheck, unit and integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pos
+          POSTGRES_PASSWORD: pos
+          POSTGRES_DB: postgres
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U pos"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build shared package
+        run: npm run build -w @pos/shared
+
+      - name: Typecheck every workspace
+        run: npm run typecheck
+
+      - name: Unit and integration tests
+        run: npm run test -w @pos/api
+        env:
+          # The harness creates and drops a database per run.
+          TEST_ADMIN_URL: postgres://pos:pos@127.0.0.1:5433/postgres
+          # CI uses the distribution's client, not a local Postgres install.
+          PG_BIN: /usr/bin
+
+      - name: Build the till
+        run: npm run build -w @pos/web
+
+  browser:
+    name: Browser and offline tests
+    runs-on: ubuntu-latest
+    needs: verify
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pos
+          POSTGRES_PASSWORD: pos
+          POSTGRES_DB: pos
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U pos"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build -w @pos/shared
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare the database
+        run: |
+          npm run db:migrate -w @pos/api
+          npm run db:seed -w @pos/api
+        env:
+          SKIP_DOTENV: 'true'
+          DATABASE_URL: postgres://pos:pos@127.0.0.1:5433/pos
+          JWT_SECRET: ci-secret-that-is-long-enough-for-hs256-signing
+          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000001
+          ALERT_WEBHOOK_URL: https://example.invalid/hook
+          BACKUP_ENABLED: 'false'
+
+      - name: Start the API
+        run: npm run dev:api &
+        env:
+          SKIP_DOTENV: 'true'
+          DATABASE_URL: postgres://pos:pos@127.0.0.1:5433/pos
+          JWT_SECRET: ci-secret-that-is-long-enough-for-hs256-signing
+          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000001
+          ALERT_WEBHOOK_URL: https://example.invalid/hook
+          BACKUP_ENABLED: 'false'
+          PORT: '4000'
+
+      - name: Build and serve the till
+        run: |
+          npm run build -w @pos/web
+          npx vite preview --host 127.0.0.1 --port 4173 --strictPort &
+        working-directory: apps/web
+
+      - name: Wait for both to be ready
+        run: |
+          npx wait-on -t 90000 http://127.0.0.1:4000/health http://127.0.0.1:4173/
+
+      - name: Browser tests
+        run: npm run e2e -w @pos/web
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: apps/web/test-results/
+          retention-days: 7
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # A known high-severity vulnerability in a payments system fails the build.
+      - run: npm audit --audit-level=high

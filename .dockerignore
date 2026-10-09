@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/build
+.git
+.env
+.env.*
+!.env.example
+backups
+*.log
+coverage
+**/*.tsbuildinfo
+apps/web/dev-dist
+docs

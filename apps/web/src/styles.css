@@ -1,0 +1,232 @@
+/* Design targets a touch till: large hit areas, high contrast, no hover-only affordances. */
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --surface: #131c2e;
+  --surface-2: #1b2740;
+  --border: #2a3550;
+  --text: #e8eefc;
+  --muted: #93a2c0;
+  --accent: #3b82f6;
+  --accent-strong: #2563eb;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --radius: 10px;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  -webkit-text-size-adjust: 100%;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+
+.app { display: flex; height: 100%; }
+
+/* ------------------------------- Navigation ------------------------------- */
+.sidebar {
+  width: 216px; flex-shrink: 0; background: var(--surface);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 16px 16px 14px; font-weight: 650; font-size: 15px; letter-spacing: .2px;
+}
+.brand-mark { color: var(--accent); font-size: 15px; }
+
+.nav { display: flex; flex-direction: column; gap: 1px; padding: 4px 8px 8px; flex: 1; overflow-y: auto; }
+.nav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px; border-radius: 8px; text-decoration: none;
+  color: var(--muted); font-weight: 500; font-size: 14px;
+}
+.nav a:hover { background: var(--surface-2); color: var(--text); }
+.nav a.active { background: var(--accent); color: #fff; }
+.nav-icon { width: 14px; text-align: center; opacity: .75; font-size: 12px; }
+
+/* The till is the job; everything else is secondary. */
+.nav a.nav-primary { font-size: 15px; font-weight: 650; padding: 12px 11px; margin-bottom: 2px; }
+
+/* Grouping headings keep ten destinations from reading as one flat list. */
+.nav-heading {
+  padding: 16px 11px 5px; font-size: 10px; font-weight: 700;
+  letter-spacing: .9px; text-transform: uppercase; color: var(--muted); opacity: .55;
+}
+
+.sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
+.sidebar-user {
+  font-size: 12px; color: var(--text); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar-role { font-size: 11px; color: var(--muted); margin-bottom: 9px; text-transform: capitalize; }
+
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  height: 54px; flex-shrink: 0; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; padding: 0 16px; background: var(--surface);
+}
+.content { flex: 1; overflow-y: auto; padding: 20px; }
+
+/* --------------------------------- Status --------------------------------- */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+  border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2);
+}
+.pill.online { color: var(--success); }
+.pill.offline { color: var(--warning); }
+.pill.error { color: var(--danger); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* -------------------------------- Controls -------------------------------- */
+.btn {
+  padding: 10px 16px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); cursor: pointer; font-weight: 600;
+  min-height: 42px; transition: filter .12s;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.15); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.success { background: var(--success); border-color: var(--success); color: #04231a; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.ghost { background: transparent; }
+.btn.lg { min-height: 56px; font-size: 17px; font-weight: 650; }
+.btn.block { width: 100%; }
+
+.input, select.input, textarea.input {
+  width: 100%; padding: 11px 12px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg); min-height: 42px;
+}
+.input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.grid { display: grid; gap: 14px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.spacer { flex: 1; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.right { text-align: right; }
+
+/* --------------------------------- Tables --------------------------------- */
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; }
+tbody tr:hover { background: var(--surface-2); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+
+/* -------------------------------- Checkout -------------------------------- */
+.till { display: grid; grid-template-columns: 1fr 400px; gap: 16px; height: 100%; }
+.till-left { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.scan-row { display: flex; gap: 10px; }
+.scan-row .input { font-size: 18px; min-height: 56px; font-weight: 500; }
+.results { overflow-y: auto; flex: 1; }
+.result-item {
+  display: flex; align-items: center; gap: 12px; padding: 11px 12px;
+  border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.result-item:hover { background: var(--surface-2); }
+
+.basket { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; min-height: 0; }
+.basket-lines { flex: 1; overflow-y: auto; padding: 6px; }
+.basket-line { padding: 11px 12px; border-bottom: 1px solid var(--border); }
+.basket-line:last-child { border-bottom: none; }
+.basket-totals { padding: 14px 16px 16px; border-top: 1px solid var(--border); background: var(--surface-2); border-radius: 0 0 12px 12px; }
+.total-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 14px; }
+/* The total is the one number a customer asks about, so it dominates. */
+.total-row.grand {
+  font-size: 30px; font-weight: 750; letter-spacing: -.5px;
+  padding-top: 11px; border-top: 1px solid var(--border); margin-top: 9px; align-items: baseline;
+}
+.total-row.grand span:first-child { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+
+.qty-control { display: flex; align-items: center; gap: 6px; }
+.qty-control button {
+  width: 32px; height: 32px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--surface-2); cursor: pointer; font-weight: 700;
+}
+
+/* --------------------------------- Modals --------------------------------- */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(4, 8, 18, .75);
+  display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
+}
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; }
+.modal h2 { margin: 0 0 14px; font-size: 19px; }
+
+/* --------------------------------- Toasts --------------------------------- */
+.toasts { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 100; max-width: 380px; }
+.toast { padding: 12px 14px; border-radius: 10px; border-left: 4px solid; background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.4); font-size: 14px; }
+.toast.success { border-color: var(--success); }
+.toast.error { border-color: var(--danger); }
+.toast.warning { border-color: var(--warning); }
+.toast.info { border-color: var(--accent); }
+
+.banner { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; }
+.banner.warning { background: rgba(245, 158, 11, .14); border: 1px solid var(--warning); }
+.banner.error { background: rgba(239, 68, 68, .14); border: 1px solid var(--danger); }
+
+.login-shell { display: flex; align-items: center; justify-content: center; height: 100%; padding: 20px; }
+.login-card { width: 100%; max-width: 400px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 18px; }
+.tabs button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; cursor: pointer; font-weight: 600; }
+.tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.keypad button { height: 58px; font-size: 21px; font-weight: 700; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; }
+
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.stat .value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+
+/* Narrow screens: the sidebar becomes icons only, and the till stacks. */
+@media (max-width: 1000px) {
+  .till { grid-template-columns: 1fr; }
+  .sidebar { width: 58px; }
+  .brand-text, .nav a span:not(.nav-icon), .nav-heading, .sidebar-user, .sidebar-role { display: none; }
+  .nav a { justify-content: center; padding: 12px 0; }
+  .nav-icon { font-size: 15px; }
+  .sidebar-footer { padding: 8px; }
+}
+
+/* ------------------------------- Quick keys ------------------------------- */
+/* Tiles for items with no barcode. Sized for a finger, not a mouse pointer. */
+.quick-keys {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+.quick-key {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 72px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: filter .12s, border-color .12s;
+}
+.quick-key:hover { filter: brightness(1.2); border-color: var(--accent); }
+.quick-key:active { transform: translateY(1px); }
+.quick-key-name { font-weight: 600; font-size: 13px; line-height: 1.25; }
+.quick-key-label { font-size: 11px; color: var(--muted); }
+.quick-key-price { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.quick-key-edit {
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-style: dashed;
+  font-size: 18px;
+}
