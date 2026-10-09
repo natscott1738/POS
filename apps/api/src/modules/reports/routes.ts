@@ -30,6 +30,15 @@ import {
 } from './service.js';
 import { listLowStock } from '../inventory/service.js';
 import { dashboard } from './dashboard.js';
+import {
+  profitReport,
+  productPerformance,
+  exceptionsReport,
+  tradingPattern,
+  customerInsights,
+  refundAnalysis,
+  periodComparison,
+} from './analysis.js';
 import { shiftSummary } from '../sales/routes.js';
 
 export async function reportRoutes(app: FastifyInstance): Promise<void> {
@@ -283,6 +292,127 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         sections: [{ title, columns, rows }],
       }),
     );
+  });
+
+  /** Revenue, cost and margin, overall and by category. */
+  app.get('/profit', { preHandler: requirePermissions('report:sales') }, async (request, reply) => {
+    const query = parseQuery(request, dateRangeQuery.and(z.object({ format: z.enum(['json', 'csv']).default('json') })));
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    assertExportAllowed(request, query.format);
+
+    const data = await profitReport({
+      from: new Date(query.from),
+      to: new Date(query.to),
+      storeIds: visibleStoreIds(request),
+      ...(query.storeId ? { storeId: query.storeId } : {}),
+    });
+
+    if (query.format === 'csv') {
+      audit(request, 'profit', 'csv');
+      return sendCsv(reply, `profit-${query.from.slice(0, 10)}-to-${query.to.slice(0, 10)}`, toCsv(data.byCategory));
+    }
+    return data;
+  });
+
+  /** Per-product sales with margin, so volume and profit can be compared. */
+  app.get('/products', { preHandler: requirePermissions('report:sales') }, async (request, reply) => {
+    const query = parseQuery(
+      request,
+      dateRangeQuery.and(
+        z.object({
+          limit: z.coerce.number().int().min(1).max(500).default(100),
+          format: z.enum(['json', 'csv']).default('json'),
+        }),
+      ),
+    );
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    assertExportAllowed(request, query.format);
+
+    const rows = await productPerformance(
+      {
+        from: new Date(query.from),
+        to: new Date(query.to),
+        storeIds: visibleStoreIds(request),
+        ...(query.storeId ? { storeId: query.storeId } : {}),
+      },
+      query.limit,
+    );
+
+    if (query.format === 'csv') {
+      audit(request, 'product-performance', 'csv');
+      return sendCsv(reply, `products-${query.from.slice(0, 10)}-to-${query.to.slice(0, 10)}`, toCsv(rows));
+    }
+    return { products: rows };
+  });
+
+  /** Discounts, voids, refunds and overrides per cashier. */
+  app.get('/exceptions', { preHandler: requirePermissions('report:sales') }, async (request, reply) => {
+    const query = parseQuery(request, dateRangeQuery.and(z.object({ format: z.enum(['json', 'csv']).default('json') })));
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    assertExportAllowed(request, query.format);
+
+    const rows = await exceptionsReport({
+      from: new Date(query.from),
+      to: new Date(query.to),
+      storeIds: visibleStoreIds(request),
+      ...(query.storeId ? { storeId: query.storeId } : {}),
+    });
+
+    if (query.format === 'csv') {
+      audit(request, 'exceptions', 'csv');
+      return sendCsv(reply, `exceptions-${query.from.slice(0, 10)}-to-${query.to.slice(0, 10)}`, toCsv(rows));
+    }
+    return { cashiers: rows };
+  });
+
+  /** Busiest hours and days, for staffing and opening hours. */
+  app.get('/trading-pattern', { preHandler: requirePermissions('report:sales') }, async (request) => {
+    const query = parseQuery(request, dateRangeQuery);
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    return tradingPattern({
+      from: new Date(query.from),
+      to: new Date(query.to),
+      storeIds: visibleStoreIds(request),
+      ...(query.storeId ? { storeId: query.storeId } : {}),
+    });
+  });
+
+  app.get('/customers', { preHandler: requirePermissions('report:sales') }, async (request) => {
+    const query = parseQuery(request, dateRangeQuery.and(z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) })));
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    return customerInsights(
+      {
+        from: new Date(query.from),
+        to: new Date(query.to),
+        storeIds: visibleStoreIds(request),
+        ...(query.storeId ? { storeId: query.storeId } : {}),
+      },
+      query.limit,
+    );
+  });
+
+  /** Why goods come back, and which products come back most. */
+  app.get('/refund-analysis', { preHandler: requirePermissions('report:sales') }, async (request) => {
+    const query = parseQuery(request, dateRangeQuery);
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    return refundAnalysis({
+      from: new Date(query.from),
+      to: new Date(query.to),
+      storeIds: visibleStoreIds(request),
+      ...(query.storeId ? { storeId: query.storeId } : {}),
+    });
+  });
+
+  /** This period against the previous one of the same length. */
+  app.get('/comparison', { preHandler: requirePermissions('report:sales') }, async (request) => {
+    const query = parseQuery(request, dateRangeQuery);
+    if (query.storeId) assertStoreAccess(request, query.storeId);
+    return periodComparison({
+      from: new Date(query.from),
+      to: new Date(query.to),
+      storeIds: visibleStoreIds(request),
+      ...(query.storeId ? { storeId: query.storeId } : {}),
+    });
   });
 
   app.get('/cashiers', { preHandler: requirePermissions('report:sales') }, async (request) => {

@@ -96,8 +96,8 @@ const schema = z.object({
 
   /** Signs access tokens. Rotating this invalidates every session instantly. */
   JWT_SECRET: z.string().min(32),
-  JWT_ISSUER: z.string().default('pos.local'),
-  JWT_AUDIENCE: z.string().default('pos.api'),
+  JWT_ISSUER: z.string().default('backyard-pos'),
+  JWT_AUDIENCE: z.string().default('backyard-pos.api'),
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().min(3600).default(60 * 60 * 24 * 14),
 

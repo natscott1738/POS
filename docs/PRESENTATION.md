@@ -1,4 +1,4 @@
-# Point of Sale — Client Presentation
+# Backyard POS — Client Presentation
 
 A document you can read, understand, and present from. Every feature is
 explained in full, with the exact steps to demonstrate it **today, without any

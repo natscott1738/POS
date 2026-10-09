@@ -63,7 +63,7 @@ test.describe('offline capability', () => {
     const text = await page.locator('#root').innerText();
     expect(text.length).toBeGreaterThan(0);
     // The sign-in screen is what an offline till should land on.
-    expect(text).toMatch(/Point of Sale|Till PIN|Email|Starting/i);
+    expect(text).toMatch(/Backyard POS|Till PIN|Email|Starting/i);
 
     await context.setOffline(false);
   });

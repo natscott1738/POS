@@ -230,3 +230,64 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   border-style: dashed;
   font-size: 18px;
 }
+
+/* --------------------------- M-PESA tap-to-apply -------------------------- */
+/* Payments that have arrived and are waiting to be attached to a sale. */
+.mpesa-candidate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: filter .12s, border-color .12s;
+}
+.mpesa-candidate:hover:not(:disabled) { filter: brightness(1.18); }
+.mpesa-candidate:disabled { opacity: .5; cursor: wait; }
+/* An exact amount match is what the cashier is almost always looking for. */
+.mpesa-candidate[data-exact='true'] {
+  border-color: var(--success);
+  background: rgba(16, 185, 129, .09);
+}
+.mpesa-tag {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  color: var(--success);
+}
+.mpesa-apply {
+  padding: 5px 13px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  flex-shrink: 0;
+}
+
+/* ------------------------------- Report tabs ------------------------------ */
+/* Nine report types need to wrap rather than squeeze onto one row. */
+.report-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.report-tabs button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.report-tabs button:hover { background: var(--surface-2); color: var(--text); }
+.report-tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }

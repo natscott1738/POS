@@ -2,7 +2,7 @@
   "name": "pos",
   "private": true,
   "version": "1.0.0",
-  "description": "Security-first retail POS with M-PESA, PDQ, QuickBooks and offline-first sync",
+  "description": "Backyard POS \u2014 security-first retail point of sale with M-PESA, PDQ, QuickBooks and offline-first sync",
   "workspaces": [
     "packages/*",
     "apps/*"

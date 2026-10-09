@@ -124,7 +124,7 @@ function Sidebar({
     <aside className="sidebar">
       <div className="brand">
         <span className="brand-mark">◉</span>
-        <span className="brand-text">Point of Sale</span>
+        <span className="brand-text">Backyard POS</span>
       </div>
 
       <nav className="nav">

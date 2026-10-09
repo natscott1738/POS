@@ -437,9 +437,33 @@ function MpesaTender({
         </button>
       )}
 
+      <PaybillCandidates
+        storeId={storeId}
+        expectedAmount={Math.round(Number(amount || 0) * 100)}
+        phone={phone}
+        onClaim={(claimed) => {
+          cart.addTender({
+            method: 'MPESA',
+            amount: claimed.amount,
+            phone: phone || '254700000000',
+            confirmationCode: claimed.confirmationCode,
+            mpesaTransactionId: claimed.transactionId,
+          });
+          toast.success(`M-PESA received · ${claimed.confirmationCode}`);
+        }}
+      />
+
+      {/* Fallback for a payment that has not reached us yet: a delayed message
+          from Safaricom, or a customer who paid hours ago. Deliberately
+          secondary — typing a code should be the exception, not the routine. */}
       <details style={{ marginTop: 14 }}>
-        <summary className="muted" style={{ cursor: 'pointer' }}>Customer already paid — enter code</summary>
-        <Field label="Confirmation code">
+        <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>
+          Payment not showing? Enter the code by hand
+        </summary>
+        <Field
+          label="Confirmation code"
+          hint="From the customer's SMS. Only needed if it has not appeared above."
+        >
           <input
             className="input mono"
             value={code}
@@ -450,6 +474,139 @@ function MpesaTender({
         <button className="btn block" onClick={addManual}>Add M-PESA payment</button>
       </details>
     </>
+  );
+}
+
+interface Candidate {
+  id: string;
+  transactionId: string;
+  amount: number;
+  phone: string | null;
+  payerName: string | null;
+  receivedAt: string;
+  amountMatch: 'EXACT' | 'CLOSE' | 'OVER' | 'UNDER';
+  phoneMatch: boolean;
+  score: number;
+}
+
+/**
+ * Live list of paybill and till payments that have arrived but are not yet
+ * attached to a sale.
+ *
+ * Replaces the old flow where the cashier read a confirmation code off the
+ * customer's phone and typed it in — slow, and the single most common place to
+ * mistype. Safaricom notifies us within seconds of the customer paying, so the
+ * payment is usually on screen before the customer has put their phone away.
+ */
+function PaybillCandidates({
+  storeId,
+  expectedAmount,
+  phone,
+  onClaim,
+}: {
+  storeId: string;
+  expectedAmount: number;
+  phone: string;
+  onClaim: (claimed: { transactionId: string; confirmationCode: string; amount: number }) => void;
+}) {
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [claiming, setClaiming] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let stopped = false;
+
+    const poll = async (): Promise<void> => {
+      try {
+        const params = new URLSearchParams({ storeId, withinMinutes: '30' });
+        if (expectedAmount > 0) params.set('amount', String(expectedAmount));
+        if (phone.length >= 9) params.set('phone', phone);
+
+        const result = await api.get<{ candidates: Candidate[] }>(
+          `/payments/mpesa/candidates?${params.toString()}`,
+        );
+        if (!stopped) setCandidates(result.candidates);
+      } catch {
+        // Offline, or no permission. The manual fallback below still works.
+      } finally {
+        if (!stopped) setChecking(false);
+      }
+    };
+
+    void poll();
+    // Three seconds is responsive enough to feel instant at the counter without
+    // hammering the server while a payment window sits open.
+    const interval = setInterval(() => void poll(), 3000);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }, [storeId, expectedAmount, phone]);
+
+  async function claim(candidate: Candidate): Promise<void> {
+    setClaiming(candidate.id);
+    try {
+      const result = await api.post<{ transactionId: string; confirmationCode: string; amount: number }>(
+        '/payments/mpesa/claim',
+        { unmatchedId: candidate.id, storeId },
+      );
+      onClaim(result);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not apply that payment');
+    } finally {
+      setClaiming(null);
+    }
+  }
+
+  if (checking && candidates.length === 0) {
+    return (
+      <div className="card" style={{ marginTop: 14, padding: 12 }}>
+        <span className="muted" style={{ fontSize: 13 }}>Watching for M-PESA payments…</span>
+      </div>
+    );
+  }
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <strong style={{ fontSize: 13 }}>Payments received</strong>
+        <span className="muted" style={{ fontSize: 12 }}>tap to apply</span>
+        <div className="spacer" />
+        <span className="pill online"><span className="dot" />live</span>
+      </div>
+
+      {candidates.slice(0, 4).map((candidate) => {
+        const exact = candidate.amountMatch === 'EXACT';
+        const seconds = Math.max(0, Math.round((Date.now() - new Date(candidate.receivedAt).getTime()) / 1000));
+        return (
+          <button
+            key={candidate.id}
+            className="mpesa-candidate"
+            // An exact amount match is highlighted so the cashier's eye lands on
+            // the right one without reading every row.
+            data-exact={exact ? 'true' : 'false'}
+            disabled={claiming !== null}
+            onClick={() => void claim(candidate)}
+          >
+            <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+              <div style={{ fontWeight: 650 }}>
+                {formatCents(candidate.amount)}
+                {exact && <span className="mpesa-tag">matches</span>}
+                {candidate.phoneMatch && <span className="mpesa-tag">same number</span>}
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {candidate.payerName ?? 'Unknown'} · {candidate.transactionId}
+                {' · '}
+                {seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)}m ago`}
+              </div>
+            </div>
+            <span className="mpesa-apply">{claiming === candidate.id ? '…' : 'Apply'}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

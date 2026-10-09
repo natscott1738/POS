@@ -24,7 +24,7 @@ export default function Login() {
   return (
     <div className="login-shell">
       <div className="login-card card">
-        <h1 style={{ marginTop: 0, fontSize: 22 }}>Point of Sale</h1>
+        <h1 style={{ marginTop: 0, fontSize: 22 }}>Backyard POS</h1>
         <div className="tabs">
           <button className={mode === 'pin' ? 'active' : ''} onClick={() => setMode('pin')}>
             Till PIN

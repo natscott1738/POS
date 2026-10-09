@@ -1,4 +1,4 @@
-# POS
+# Backyard POS
 
 Retail point of sale for Kenyan trading: fast checkout, M-PESA and card (PDQ)
 payments, inventory with variants, QuickBooks Online posting, and tills that keep

@@ -583,6 +583,155 @@ describe('offline sync', () => {
   });
 });
 
+describe('M-PESA paybill matching', () => {
+  /**
+   * The cashier should never have to type a confirmation code. Safaricom tells
+   * us about the payment within seconds; these tests cover the till finding it
+   * and claiming it safely.
+   */
+  async function recordPaybillPayment(amount: number, phone: string): Promise<string> {
+    const { db } = await import('../src/db/client.js');
+    const schema = await import('../src/db/schema/index.js');
+    const code = `TST${Math.random().toString(36).slice(2, 9).toUpperCase()}`;
+    const [row] = await db
+      .insert(schema.mpesaUnmatchedPayments)
+      .values({
+        transactionId: code,
+        amount,
+        phone,
+        payerName: 'Test Payer',
+        raw: { source: 'integration-test' },
+      })
+      .returning({ id: schema.mpesaUnmatchedPayments.id });
+    return row!.id;
+  }
+
+  it('ranks an exact-amount payment above the others', async () => {
+    await recordPaybillPayment(55_000, '254700111222');
+    await recordPaybillPayment(120_000, '254700333444');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/payments/mpesa/candidates?storeId=${storeId}&amount=120000`,
+      headers: auth(cashierToken),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.candidates.length).toBeGreaterThanOrEqual(2);
+    // Best match first, so the cashier's eye lands on the right row.
+    expect(body.candidates[0].amount).toBe(120_000);
+    expect(body.candidates[0].amountMatch).toBe('EXACT');
+  });
+
+  it('auto-matches only when exactly one payment is unambiguous', async () => {
+    const { db } = await import('../src/db/client.js');
+    const schema = await import('../src/db/schema/index.js');
+    // Clear the field so there is precisely one candidate.
+    await db.delete(schema.mpesaUnmatchedPayments);
+    await recordPaybillPayment(77_000, '254700555666');
+
+    const single = await app.inject({
+      method: 'GET',
+      url: `/api/v1/payments/mpesa/candidates?storeId=${storeId}&amount=77000`,
+      headers: auth(cashierToken),
+    });
+    expect(single.json().autoMatch).not.toBeNull();
+
+    // A second payment for the same amount makes it ambiguous, so the till must
+    // not choose for the cashier.
+    await recordPaybillPayment(77_000, '254700777888');
+    const ambiguous = await app.inject({
+      method: 'GET',
+      url: `/api/v1/payments/mpesa/candidates?storeId=${storeId}&amount=77000`,
+      headers: auth(cashierToken),
+    });
+    expect(ambiguous.json().autoMatch).toBeNull();
+  });
+
+  it('claims a payment without anyone typing a code, and only once', async () => {
+    const unmatchedId = await recordPaybillPayment(99_000, '254700999000');
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/v1/payments/mpesa/claim',
+      headers: auth(cashierToken),
+      payload: { unmatchedId, storeId },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().amount).toBe(99_000);
+    expect(first.json().confirmationCode).toBeTruthy();
+
+    // Two cashiers tapping the same payment: the second must be refused.
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/v1/payments/mpesa/claim',
+      headers: auth(cashierToken),
+      payload: { unmatchedId, storeId },
+    });
+    expect(second.statusCode).toBe(409);
+  });
+
+  it('lets a cashier see candidates without the reconcile permission', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/payments/mpesa/candidates?storeId=${storeId}`,
+      headers: auth(cashierToken),
+    });
+    expect(response.statusCode).toBe(200);
+
+    // Reviewing historic unmatched payments stays a manager's job.
+    const restricted = await app.inject({
+      method: 'GET',
+      url: '/api/v1/payments/mpesa/unmatched',
+      headers: auth(cashierToken),
+    });
+    expect(restricted.statusCode).toBe(403);
+  });
+});
+
+describe('expanded reports', () => {
+  it('reports profit and margin by category', async () => {
+    const from = new Date(Date.now() - 86_400_000).toISOString();
+    const to = new Date(Date.now() + 86_400_000).toISOString();
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/reports/profit?from=${from}&to=${to}`,
+      headers: auth(adminToken),
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.totals.revenue).toBeGreaterThan(0);
+    // Gross profit must be revenue less cost, not an independent figure.
+    expect(body.totals.grossProfit).toBe(body.totals.revenue - body.totals.cost);
+  });
+
+  it('compares a period against the one before it', async () => {
+    const from = new Date(Date.now() - 86_400_000).toISOString();
+    const to = new Date().toISOString();
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/reports/comparison?from=${from}&to=${to}`,
+      headers: auth(adminToken),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().current).toBeDefined();
+    expect(response.json().previousPeriod).toBeDefined();
+  });
+
+  it('breaks activity down per cashier', async () => {
+    const from = new Date(Date.now() - 86_400_000).toISOString();
+    const to = new Date(Date.now() + 86_400_000).toISOString();
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/reports/exceptions?from=${from}&to=${to}`,
+      headers: auth(adminToken),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(Array.isArray(response.json().cashiers)).toBe(true);
+  });
+});
+
 describe('shifts', () => {
   it('computes cash variance from the ledger, not from the client', async () => {
     // The previous block deliberately drives stock negative; this one sells.

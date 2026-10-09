@@ -77,7 +77,7 @@ export async function requestPasswordReset(request: FastifyRequest, email: strin
   const link = `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/reset-password?token=${token}`;
   const result = await sendEmail({
     to: email,
-    subject: 'Reset your POS password',
+    subject: 'Reset your Backyard POS password',
     text: [
       'A password reset was requested for your point-of-sale account.',
       '',

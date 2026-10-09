@@ -73,7 +73,9 @@ test.describe('checkout journey', () => {
 
     // Settle the rest with a manually entered M-PESA code.
     await page.getByRole('button', { name: 'M-PESA' }).click();
-    await page.getByText('Customer already paid — enter code').click();
+    // Manual code entry is now the fallback; the normal path is tapping a
+    // payment that has already arrived from Safaricom.
+    await page.getByText('Payment not showing? Enter the code by hand').click();
     await page.getByLabel('Confirmation code').fill(`E2E${Date.now().toString().slice(-7)}`);
     await page.getByRole('button', { name: 'Add M-PESA payment' }).click();
 

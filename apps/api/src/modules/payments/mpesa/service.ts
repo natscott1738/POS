@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt, sql, desc } from 'drizzle-orm';
+import { and, eq, gte, isNull, lt, sql, desc } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { MpesaStkPushInput, MpesaStkCallback } from '@pos/shared';
 import { db } from '../../../db/client.js';
@@ -358,6 +358,173 @@ export async function getTransaction(id: string) {
   if (!record) throw notFound('M-PESA transaction');
   return record;
 }
+
+/**
+ * Payments that arrived at the paybill or till but have not been attached to a
+ * sale yet, ranked by how likely each is to be the one the cashier is waiting for.
+ *
+ * This exists so a cashier never has to read a confirmation code off a customer's
+ * phone and type it in. The payment is already in the system within seconds of
+ * the customer sending it; the cashier just taps the right one.
+ */
+export async function findCandidatePayments(input: {
+  storeId: string;
+  /** What the till is waiting to be paid, in cents. */
+  expectedAmount?: number;
+  phone?: string;
+  /** How far back to look. Customers sometimes pay before being asked. */
+  withinMinutes?: number;
+  limit?: number;
+}): Promise<
+  Array<{
+    id: string;
+    transactionId: string;
+    amount: number;
+    phone: string | null;
+    payerName: string | null;
+    receivedAt: Date;
+    /** EXACT when the amount matches to the cent; CLOSE within a shilling. */
+    amountMatch: 'EXACT' | 'CLOSE' | 'OVER' | 'UNDER';
+    phoneMatch: boolean;
+    /** Higher is more likely to be the payment the cashier is waiting for. */
+    score: number;
+  }>
+> {
+  const since = new Date(Date.now() - (input.withinMinutes ?? 30) * 60_000);
+
+  const rows = await db
+    .select()
+    .from(mpesaUnmatchedPayments)
+    .where(
+      and(
+        // Unclaimed, by the same measure the claim itself uses.
+        isNull(mpesaUnmatchedPayments.matchedAt),
+        gte(mpesaUnmatchedPayments.createdAt, since),
+      ),
+    )
+    .orderBy(desc(mpesaUnmatchedPayments.createdAt))
+    .limit(input.limit ?? 25);
+
+  const normalisedPhone = input.phone?.replace(/\D/g, '').slice(-9);
+
+  return rows
+    .map((row) => {
+      const difference = input.expectedAmount !== undefined ? row.amount - input.expectedAmount : 0;
+      const amountMatch: 'EXACT' | 'CLOSE' | 'OVER' | 'UNDER' =
+        input.expectedAmount === undefined || difference === 0
+          ? 'EXACT'
+          : Math.abs(difference) <= 100
+            ? 'CLOSE'
+            : difference > 0
+              ? 'OVER'
+              : 'UNDER';
+
+      const rowPhone = row.phone?.replace(/\D/g, '').slice(-9);
+      const phoneMatch = Boolean(normalisedPhone && rowPhone && normalisedPhone === rowPhone);
+
+      // Amount is the strongest signal, then the phone, then recency: a payment
+      // that arrived ten seconds ago is far more likely than one from an hour back.
+      const ageMinutes = (Date.now() - row.createdAt.getTime()) / 60_000;
+      const score =
+        (amountMatch === 'EXACT' ? 100 : amountMatch === 'CLOSE' ? 40 : 0) +
+        (phoneMatch ? 50 : 0) +
+        Math.max(0, 30 - ageMinutes);
+
+      return {
+        id: row.id,
+        transactionId: row.transactionId,
+        amount: row.amount,
+        phone: row.phone,
+        payerName: row.payerName,
+        receivedAt: row.createdAt,
+        amountMatch,
+        phoneMatch,
+        score: Math.round(score),
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Attaches an already-received paybill payment to a sale by its database id,
+ * rather than by a code someone typed. Used by the tap-to-confirm flow.
+ */
+export async function claimUnmatchedPayment(
+  request: FastifyRequest,
+  input: { unmatchedId: string; storeId: string; saleId?: string; clientSaleId?: string },
+  userId: string,
+): Promise<{ transactionId: string; confirmationCode: string; amount: number }> {
+  return db.transaction(async (tx) => {
+    const [unmatched] = await tx
+      .select()
+      .from(mpesaUnmatchedPayments)
+      .where(eq(mpesaUnmatchedPayments.id, input.unmatchedId))
+      .limit(1)
+      .for('update');
+
+    if (!unmatched) throw notFound('M-PESA payment');
+    // Two cashiers tapping the same payment at once: the row lock means the
+    // second one is told it is already taken rather than both succeeding.
+    //
+    // Keyed on matchedAt rather than matchedSaleId, because a payment claimed
+    // while the sale is still being built has no sale id yet — checking the sale
+    // id alone would let the same payment be claimed twice.
+    if (unmatched.matchedAt) {
+      throw conflict('That M-PESA payment has already been applied to a sale');
+    }
+
+    const [sale] = input.saleId
+      ? await tx.select().from(sales).where(eq(sales.id, input.saleId)).limit(1)
+      : [undefined];
+
+    const [created] = await tx
+      .insert(mpesaTransactions)
+      .values({
+        // A paybill payment carries no store of its own, so the till tells us.
+        storeId: sale?.storeId ?? input.storeId,
+        saleId: input.saleId ?? null,
+        clientSaleId: input.clientSaleId ?? null,
+        kind: 'PAYBILL_CLAIM',
+        status: 'CAPTURED',
+        amount: unmatched.amount,
+        confirmedAmount: unmatched.amount,
+        phone: unmatched.phone ?? '',
+        accountReference: unmatched.billReference ?? '',
+        confirmationCode: unmatched.transactionId,
+        payerName: unmatched.payerName,
+        transactionDate: unmatched.transactionTime,
+        reconciledAt: new Date(),
+        reconciledBy: userId,
+        initiatedBy: userId,
+      })
+      .returning({ id: mpesaTransactions.id });
+
+    if (!created) throw conflict('Could not record the M-PESA payment');
+
+    await tx
+      .update(mpesaUnmatchedPayments)
+      .set({
+        matchedSaleId: input.saleId ?? null,
+        matchedAt: new Date(),
+        matchedBy: userId,
+      })
+      .where(eq(mpesaUnmatchedPayments.id, unmatched.id));
+
+    await writeAudit(tx, request, {
+      action: 'MPESA_PAYBILL_CLAIMED',
+      entityType: 'MPESA_TRANSACTION',
+      entityId: created.id,
+      changes: { code: unmatched.transactionId, amount: unmatched.amount },
+    });
+
+    return {
+      transactionId: created.id,
+      confirmationCode: unmatched.transactionId,
+      amount: unmatched.amount,
+    };
+  });
+}
+
 
 export async function listUnmatched(limit = 50) {
   return db

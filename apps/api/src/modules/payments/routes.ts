@@ -12,7 +12,7 @@ import {
   uuid,
 } from '@pos/shared';
 import { env } from '../../config/env.js';
-import { parseBody, parseParams } from '../../core/validation.js';
+import { parseBody, parseParams, parseQuery } from '../../core/validation.js';
 import { requirePermissions, getAuth, assertStoreAccess } from '../../auth/context.js';
 import { forbidden, integrationUnavailable, notFound } from '../../core/errors.js';
 import { safeEqual } from '../../core/crypto.js';
@@ -21,6 +21,8 @@ import {
   handleStkCallback,
   handleC2bConfirmation,
   matchConfirmationToSale,
+  findCandidatePayments,
+  claimUnmatchedPayment,
   getTransaction,
   listUnmatched,
   reconcilePendingPushes,
@@ -61,6 +63,60 @@ export async function paymentRoutes(app: FastifyInstance): Promise<void> {
       amountMismatch:
         record.confirmedAmount !== null && record.confirmedAmount !== record.amount,
     };
+  });
+
+  /**
+   * Paybill payments waiting to be attached to a sale, best match first.
+   *
+   * The till polls this while the M-PESA tab is open, so a payment the customer
+   * has just sent appears on screen within seconds. The cashier taps it instead
+   * of reading a code off the customer's phone and typing it in.
+   *
+   * Available to any cashier who can take M-PESA, because tapping a payment is
+   * part of taking one — reconciling historic payments is a separate permission.
+   */
+  app.get('/mpesa/candidates', { preHandler: requirePermissions('payment:mpesa:initiate') }, async (request) => {
+    const query = parseQuery(
+      request,
+      z.object({
+        storeId: uuid,
+        amount: z.coerce.number().int().min(0).optional(),
+        phone: z.string().trim().max(20).optional(),
+        withinMinutes: z.coerce.number().int().min(1).max(1440).default(30),
+      }),
+    );
+    assertStoreAccess(request, query.storeId);
+
+    const candidates = await findCandidatePayments({
+      storeId: query.storeId,
+      ...(query.amount !== undefined ? { expectedAmount: query.amount } : {}),
+      ...(query.phone ? { phone: query.phone } : {}),
+      withinMinutes: query.withinMinutes,
+    });
+
+    return {
+      candidates,
+      // The till auto-selects only when there is exactly one unambiguous match,
+      // so it can never quietly attach the wrong customer's payment.
+      autoMatch:
+        candidates.length === 1 && candidates[0]?.amountMatch === 'EXACT' ? candidates[0] : null,
+    };
+  });
+
+  /** Attaches a received paybill payment to a sale by id, not by a typed code. */
+  app.post('/mpesa/claim', { preHandler: requirePermissions('payment:mpesa:initiate') }, async (request) => {
+    const auth = getAuth(request);
+    const input = parseBody(
+      request,
+      z.object({
+        unmatchedId: uuid,
+        storeId: uuid,
+        saleId: uuid.optional(),
+        clientSaleId: uuid.optional(),
+      }),
+    );
+    assertStoreAccess(request, input.storeId);
+    return claimUnmatchedPayment(request, input, auth.userId);
   });
 
   app.get('/mpesa/unmatched', { preHandler: requirePermissions('payment:mpesa:reconcile') }, async () => {

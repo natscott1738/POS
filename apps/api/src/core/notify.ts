@@ -124,7 +124,7 @@ export async function sendTestAlert(): Promise<boolean> {
   return sendAlert({
     key: 'test-alert',
     severity: 'info',
-    title: 'POS alert test',
+    title: 'Backyard POS alert test',
     detail: 'If you can read this, operational alerts are working.',
   });
 }

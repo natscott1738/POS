@@ -18,7 +18,7 @@ export default function Admin() {
         {can('user:read') && <button className={tab === 'USERS' ? 'active' : ''} onClick={() => setTab('USERS')}>Staff</button>}
         {can('store:read') && <button className={tab === 'STORES' ? 'active' : ''} onClick={() => setTab('STORES')}>Stores</button>}
         {can('store:read') && <button className={tab === 'TERMINALS' ? 'active' : ''} onClick={() => setTab('TERMINALS')}>Tills</button>}
-        {can('store:read') && <button className={tab === 'CARD' ? 'active' : ''} onClick={() => setTab('CARD')}>Card terminals</button>}
+        {can('store:read') && <button className={tab === 'CARD' ? 'active' : ''} onClick={() => setTab('CARD')}>Card machines</button>}
         {can('audit:read') && <button className={tab === 'AUDIT' ? 'active' : ''} onClick={() => setTab('AUDIT')}>Audit log</button>}
       </div>
 
@@ -452,16 +452,32 @@ function CardTerminals() {
 
   return (
     <>
+      {/* Most shops do not need this screen at all, and an owner should be able
+          to tell that in ten seconds rather than wondering what they are missing. */}
+      <div className="card" style={{ marginBottom: 14 }}>
+        <strong style={{ fontSize: 15 }}>Do you need this?</strong>
+        <p className="muted" style={{ fontSize: 13, margin: '6px 0 10px' }}>
+          Only if your bank lets the till send the amount to the card machine
+          automatically. Most shops keep the card machine separate: the cashier reads
+          the total off the screen, keys it into the machine, and records the approval
+          code. <strong>That works today and needs nothing on this screen.</strong>
+        </p>
+        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+          Set a machine up here only once your bank has given you their integration
+          details. Ask them for &ldquo;ECR integration&rdquo; or &ldquo;POS integration&rdquo;.
+        </p>
+      </div>
+
       <div className="row" style={{ marginBottom: 12 }}>
         <span className="muted" style={{ fontSize: 13 }}>
-          Card data never reaches this system — only a masked number and auth code are stored.
+          Card numbers never reach this system — only the last four digits and the approval code.
         </span>
         <div className="spacer" />
-        {can('store:write') && <button className="btn primary" onClick={() => setAdding(true)}>Add card terminal</button>}
+        {can('store:write') && <button className="btn primary" onClick={() => setAdding(true)}>Add card machine</button>}
       </div>
       <div className="card" style={{ padding: 0 }}>
         {loading ? <Loading /> : (data?.terminals.length ?? 0) === 0 ? (
-          <Empty message="No card terminals configured. Card payments will be unavailable until one is added." />
+          <Empty message="No card machine connected. Cashiers can still take card payments on a standalone machine and record the approval code." />
         ) : (
           <table>
             <thead><tr><th>Label</th><th>Type</th><th>Acquirer</th><th>Endpoint</th><th>Secret</th><th>Status</th></tr></thead>
@@ -497,15 +513,15 @@ function CardTerminalForm({ storeId, onClose, onDone }: { storeId: string; onClo
   const { busy, run } = useMutation();
 
   return (
-    <Modal title="Add card terminal" onClose={onClose}>
+    <Modal title="Add card machine" onClose={onClose}>
       <FormGrid>
         <Field label="Label">
           <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Counter card machine" autoFocus />
         </Field>
-        <Field label="Type">
+        <Field label="Type" hint="Use the simulator to try the flow without real hardware.">
           <select className="input" value={provider} onChange={(e) => setProvider(e.target.value as 'SIMULATOR' | 'ECR_HTTP')}>
-            <option value="ECR_HTTP">Real terminal (ECR bridge)</option>
-            <option value="SIMULATOR">Simulator (testing only)</option>
+            <option value="ECR_HTTP">Real machine, connected to the till</option>
+            <option value="SIMULATOR">Simulator — testing only</option>
           </select>
         </Field>
         <Field label="Acquirer">

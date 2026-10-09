@@ -45,9 +45,9 @@ export default defineConfig({
         skipWaiting: true,
       },
       manifest: {
-        name: 'POS',
-        short_name: 'POS',
-        description: 'Point of sale',
+        name: 'Backyard POS',
+        short_name: 'Backyard POS',
+        description: 'Backyard POS — retail point of sale',
         theme_color: '#0b1220',
         background_color: '#0b1220',
         display: 'standalone',
