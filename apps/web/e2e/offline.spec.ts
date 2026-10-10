@@ -55,6 +55,8 @@ test.describe('offline capability', () => {
 
     await expect(page.getByLabel('Scan or search')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.pill.offline')).toBeVisible();
+    // Being offline is shown by the badge; it is not an error to shout about.
+    await expect(page.locator('.toast.error')).toHaveCount(0);
 
     await context.setOffline(false);
   });

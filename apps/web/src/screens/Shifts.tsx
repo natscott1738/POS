@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { formatCents } from '@pos/shared';
 import { api, download } from '../lib/api.js';
 import { useApi, useMutation } from '../lib/useApi.js';
-import { useAuth, toast } from '../lib/store.js';
+import { useAuth, useNetwork, toast } from '../lib/store.js';
+import { getMeta, setMeta } from '../lib/db.js';
 import { Modal } from '../components/Modal.js';
 import { Field, MoneyInput, Badge } from '../components/ui.js';
 
@@ -34,16 +35,31 @@ export interface Shift {
  * the end of the day, so it is surfaced where the cashier already is rather than
  * buried in a menu.
  */
+type CurrentShift = { shift: Shift | null; summary: ShiftSummary | null };
+
 export function ShiftBar({ storeId, terminalId }: { storeId: string; terminalId: string }) {
-  const { data, reload } = useApi<{ shift: Shift | null; summary: ShiftSummary | null }>(
-    `/shifts/current?terminalId=${terminalId}`,
-    [terminalId],
-  );
+  const online = useNetwork((s) => s.serverReachable);
+  // Reloaded when the connection comes back, so the bar catches up on its own.
+  const { data, reload } = useApi<CurrentShift>(`/shifts/current?terminalId=${terminalId}`, [terminalId, online]);
   const [opening, setOpening] = useState(false);
   const [closing, setClosing] = useState(false);
   const setShift = useAuth((s) => s.setShift);
 
-  const shift = data?.shift ?? null;
+  // The last shift the server reported, kept on the device. Offline, the till
+  // still knows a shift is open and attaches sales to it, so they count towards
+  // the cash expected at close instead of falling outside any shift.
+  const cacheKey = `shift:${terminalId}`;
+  const [cached, setCached] = useState<CurrentShift | null>(null);
+  useEffect(() => {
+    void getMeta<CurrentShift | null>(cacheKey, null).then(setCached);
+  }, [cacheKey]);
+  useEffect(() => {
+    if (data) void setMeta(cacheKey, data);
+  }, [cacheKey, data]);
+
+  const current = data ?? (online ? null : cached);
+  const shift = current?.shift ?? null;
+  const showingSaved = !data && Boolean(current);
 
   // Publish the open shift so the payment panel can attach sales to it.
   useEffect(() => {
@@ -67,8 +83,18 @@ export function ShiftBar({ storeId, terminalId }: { storeId: string; terminalId:
                   {formatCents(data.summary.grossSales)}
                 </span>
               )}
+              {showingSaved && (
+                <span className="muted" style={{ fontSize: 13 }}>· offline, totals update when back online</span>
+              )}
               <div className="spacer" />
-              <button className="btn ghost" onClick={() => setClosing(true)}>Close shift</button>
+              {online && <button className="btn ghost" onClick={() => setClosing(true)}>Close shift</button>}
+            </>
+          ) : !online && !current ? (
+            <>
+              <Badge tone="warning">Offline</Badge>
+              <span className="muted" style={{ fontSize: 13 }}>
+                Sales are saved on this till. Shift details load when the connection is back.
+              </span>
             </>
           ) : (
             <>
@@ -77,7 +103,7 @@ export function ShiftBar({ storeId, terminalId }: { storeId: string; terminalId:
                 Sales still work, but cash cannot be reconciled without one.
               </span>
               <div className="spacer" />
-              <button className="btn" onClick={() => setOpening(true)}>Open shift</button>
+              {online && <button className="btn" onClick={() => setOpening(true)}>Open shift</button>}
             </>
           )}
         </div>

@@ -23,8 +23,10 @@ export function useApi<T>(path: string | null, deps: unknown[] = []) {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Could not load data';
       setError(message);
-      // A permission problem is expected for some roles; do not shout about it.
-      if (!(err instanceof ApiError) || err.code !== 'FORBIDDEN') toast.error(message);
+      // A permission problem is expected for some roles, and being offline is
+      // already shown by the connection badge: neither needs an error on top.
+      const quiet = err instanceof ApiError && (err.code === 'FORBIDDEN' || err.code === 'NETWORK');
+      if (!quiet) toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -51,7 +53,11 @@ export function useMutation() {
         options.onDone?.(result);
         return result;
       } catch (err) {
-        toast.error(err instanceof ApiError ? err.message : 'That did not work');
+        if (err instanceof ApiError && err.code === 'NETWORK') {
+          toast.warning('You are offline. This needs a connection to the server; try again when it is back.');
+        } else {
+          toast.error(err instanceof ApiError ? err.message : 'That did not work');
+        }
         return undefined;
       } finally {
         setBusy(false);
