@@ -73,7 +73,7 @@ export default function Dashboard() {
 
       <NeedsAttention attention={data.attention} />
 
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginTop: 16 }}>
+      <div className="grid split-2" style={{ marginTop: 16 }}>
         <div className="card">
           <h2 style={{ marginTop: 0, fontSize: 16 }}>Through the day</h2>
           {data.hourly.length === 0 ? (

@@ -25,7 +25,7 @@ export default function Settings() {
     <div>
       <h1 style={{ marginTop: 0 }}>Settings</h1>
 
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))' }}>
         <div className="card">
           <h2 style={{ marginTop: 0, fontSize: 16 }}>This till</h2>
           {(!storeId || !terminalId) && (

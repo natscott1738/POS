@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { Permission } from '@pos/shared';
 import { useAuth, useNetwork } from './lib/store.js';
 import { startSync, stopSync, runSync } from './lib/sync.js';
@@ -20,6 +20,13 @@ import Settings from './screens/Settings.js';
 
 export default function App() {
   const { user, ready, restore, signOut, can } = useAuth();
+  // On narrow screens the navigation is a drawer; moving to another page closes it.
+  const [navOpen, setNavOpen] = useState(false);
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     void restore();
@@ -54,10 +61,26 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar email={user.email} role={user.role} can={can} onSignOut={() => void signOut()} />
+      <Sidebar
+        email={user.email}
+        role={user.role}
+        can={can}
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        onSignOut={() => void signOut()}
+      />
+      {navOpen && <div className="nav-backdrop" onClick={() => setNavOpen(false)} />}
 
       <main className="main">
         <header className="topbar">
+          <button
+            className="nav-toggle"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={navOpen}
+          >
+            ☰
+          </button>
           <ConnectionBadge />
           <div className="spacer" />
           <span className="muted" style={{ fontSize: 13 }}>{user.role}</span>
@@ -100,11 +123,15 @@ function Sidebar({
   email,
   role,
   can,
+  open,
+  onClose,
   onSignOut,
 }: {
   email: string;
   role: string;
   can: (permission: Permission) => boolean;
+  open: boolean;
+  onClose: () => void;
   onSignOut: () => void;
 }) {
   const manage = [
@@ -121,13 +148,14 @@ function Sidebar({
   ].filter(Boolean) as Array<{ to: string; label: string }>;
 
   return (
-    <aside className="sidebar">
+    <aside className={open ? 'sidebar open' : 'sidebar'}>
       <div className="brand">
         <span className="brand-mark">◉</span>
         <span className="brand-text">Backyard POS</span>
       </div>
 
-      <nav className="nav">
+      {/* Tapping a link closes the drawer even when it is the page already open. */}
+      <nav className="nav" onClick={onClose}>
         <NavLink to="/" end className="nav-primary">
           <span className="nav-icon">▦</span>
           <span>Till</span>

@@ -564,7 +564,7 @@ function Returns({ range }: { range: string }) {
   if (!data) return <Empty message="No data." />;
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+    <div className="grid split-2">
       <div className="card" style={{ padding: 0 }}>
         <div className="row" style={{ padding: '12px 14px' }}><strong style={{ fontSize: 15 }}>Why things come back</strong></div>
         <table>
@@ -622,7 +622,7 @@ function Pattern({ range }: { range: string }) {
   const peakDay = Math.max(1, ...data.byWeekday.map((d) => d.revenue));
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+    <div className="grid split-2">
       <div className="card">
         <strong style={{ fontSize: 15 }}>By hour</strong>
         <p className="muted" style={{ fontSize: 12, marginTop: 2 }}>When to put extra staff on the counter.</p>

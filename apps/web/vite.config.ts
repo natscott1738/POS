@@ -51,7 +51,8 @@ export default defineConfig({
         theme_color: '#0b1220',
         background_color: '#0b1220',
         display: 'standalone',
-        orientation: 'landscape',
+        // Phones are held upright; a till tablet can still be turned sideways.
+        orientation: 'any',
         start_url: '/',
         scope: '/',
         icons: [

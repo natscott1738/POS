@@ -161,7 +161,9 @@ export default function Checkout() {
           <button className="btn primary" type="submit">Add</button>
         </form>
 
-        <QuickKeys onPick={() => scanRef.current?.focus()} />
+        <div className="till-quick-keys">
+          <QuickKeys onPick={() => scanRef.current?.focus()} />
+        </div>
 
         <div className="card results" style={{ padding: 0 }}>
           {results.length === 0 ? (
@@ -252,7 +254,7 @@ export default function Checkout() {
           >
             Take payment · {formatCents(totals.total)}
           </button>
-          <div className="muted" style={{ fontSize: 11, textAlign: 'center', marginTop: 6 }}>
+          <div className="muted shortcut-hint" style={{ fontSize: 11, textAlign: 'center', marginTop: 6 }}>
             F2 pay · F3 hold · F4 held baskets · F8 back to scanner · type “3*” then scan for 3
           </div>
         </div>
