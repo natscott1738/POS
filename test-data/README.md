@@ -1,65 +1,59 @@
 # Test data
 
-Data for trying the POS by hand. Nothing here is loaded automatically: you enter it
-through the app, the same way a real shop would.
+A demo store is already loaded on the live system, so the app can be tried
+without touching the real shop.
 
 | File | What it is |
 |---|---|
-| [products.csv](products.csv) | 29 products (35 variants) in the till's import format. Upload it under **Products → Import CSV**. |
-| this file | Store, till and customer details to type in, and a checklist of things to try. |
+| [products.csv](products.csv) | 29 products (35 variants) in the till's import format. This is what the demo store was loaded from; **Products → Import CSV** accepts it, and re-importing skips SKUs that already exist. |
+| this file | What the demo store contains, and a checklist of things to try. |
 
-> **This goes into the live database.** Test sales, receipts and stock movements stay
-> in the reports and audit trail. Keep everything under the test store below, so it
-> can be told apart from real trading and deactivated later.
+> **Products and customers are shared by every store.** Only stock, tills, sales
+> and staff access belong to a store. The demo products and customers therefore
+> also appear in the real store's catalogue (with no stock there). Deactivate them
+> under Products and Customers when you no longer want them.
 
-## Setup order
+## The demo store
 
-1. **Store**: Admin → Add store (details below).
-2. **Tills**: Admin → Terminals, add the two below.
-3. **Staff**: Admin → Edit each demo account (`demo.manager@`, `demo.cashier@`,
-   `demo.auditor@tigonigrown.com`) and assign it to the test store. Admins see every
-   store already.
-4. **Register a till**: open the till on the device you'll sell from. It asks you to
-   choose the store and terminal.
-5. **Products**: Products → Import CSV → choose `products.csv` → check the preview →
-   import into the test store. Opening stock is loaded with the products.
-6. **Customers**: Customers → Add customer (details below).
-
-## Store
-
-| Field | Value |
+| | |
 |---|---|
-| Code | `TEST01` |
-| Name | `Tigoni Grown - Test Store` |
-| Address | `Limuru Road, Tigoni, Kiambu` |
-| Phone | `0700 000 000` |
-| KRA PIN | `P051234567X` (made up) |
-| Currency | `KES` |
-| Prices include tax | Yes (every price in the CSV includes VAT) |
-| Cash rounding | `0` (no rounding, so totals are exact while testing) |
-| Receipt header | `TIGONI GROWN LIMITED - TEST STORE` |
-| Receipt footer | `TEST RECEIPT - NOT A TAX INVOICE` |
+| Store | `DEMO` · Backyard Demo Store · Limuru Road, Tigoni, Kiambu · KRA PIN `P051234567X` (made up) |
+| Prices | Include VAT, no cash rounding |
+| Receipts | Header `BACKYARD POS - DEMO STORE`, footer `DEMO RECEIPT - NOT A TAX INVOICE` |
+| Tills | `T1` Front counter (receipts `BYD1-…`) · `T2` Back counter (receipts `BYD2-…`) |
+| Products | All 29 from `products.csv`, with opening stock in this store only |
+| Customers | The five below |
+| Sales | 10 cash sales on `T1`, receipts `BYD1-000001` to `BYD1-000010`, KES 15,801 in total |
 
-## Tills (terminals)
+To sell there, open the till and choose **Backyard Demo Store** and a till. The
+choice is remembered on that device only.
 
-| Code | Name | Receipt prefix |
+## Demo staff
+
+All use the `@backyardpos.test` domain, which is reserved for testing and can
+never receive mail. Passwords and PINs were given out separately; they are not
+kept in the repository.
+
+| Account | Role | Store access |
 |---|---|---|
-| `T1` | `Front counter` | `TST1` |
-| `T2` | `Back counter` | `TST2` |
+| `demo.admin@backyardpos.test` | Administrator | Every store |
+| `demo.manager@backyardpos.test` | Manager | Backyard Demo Store |
+| `demo.cashier@backyardpos.test` | Cashier | Backyard Demo Store |
+| `demo.auditor@backyardpos.test` | Auditor (read-only) | Backyard Demo Store |
 
-Receipt prefixes must be unique across every store, so keep `TST` for test tills.
+The owner account cannot be changed by any of these, including `demo.admin`.
 
 ## Customers
 
 Phone numbers and KRA PINs are made up. Don't send live M-PESA prompts to them.
 
-| Name | Phone | Email | KRA PIN | Credit limit | Marketing | Tests |
-|---|---|---|---|---|---|---|
-| Jane Wanjiru | `0712 345 678` | `jane.wanjiru@example.com` | | 0 | Yes | A regular customer: search by phone, loyalty |
-| Limuru Hotel Supplies Ltd | `0722 000 111` | `accounts@limuru-hotel.example.com` | `P051000001K` | 50,000 | No | Business customer with a KRA PIN; selling on account (credit) |
-| Brian Otieno | `0110 000 222` | | | 0 | No | Newer `01..` number format; birthday `1990-05-14` |
-| Amina Hassan | | `amina.hassan@example.com` | | 0 | Yes | Email only, no phone: emailed receipt |
-| Daraja Sandbox | `0708 374 149` | | | 0 | No | Safaricom's M-PESA **sandbox** test number, for when M-PESA is enabled in sandbox mode |
+| Name | Phone | Email | Tests |
+|---|---|---|---|
+| Jane Wanjiru | `0712 345 678` | `jane.wanjiru@example.com` | A regular customer: search by phone |
+| Limuru Hotel Supplies Ltd | `0722 000 111` | `accounts@limuru-hotel.example.com` | Business customer with KRA PIN `P051000001K` |
+| Brian Otieno | `0110 000 222` | | Newer `01..` number format; birthday `1990-05-14` |
+| Amina Hassan | | `amina.hassan@example.com` | Email only, no phone: emailed receipt |
+| Daraja Sandbox | `0708 374 149` | | Safaricom's M-PESA **sandbox** test number, for when M-PESA is enabled in sandbox mode |
 
 ## What the products cover
 
@@ -72,22 +66,24 @@ Phone numbers and KRA PINs are made up. Don't send live M-PESA prompts to them.
 | Pack unit | **Toilet Paper 10 Pack** |
 | Variants | **Cotton T-Shirt** (Navy S/M/L, White M/L), **Gumboots** (sizes 40/42/44) |
 | Search by name (no barcode) | **Sukuma Wiki (bunch)**, **Fresh Milk Dispenser** |
-| Low-stock warnings | **Eggs Tray of 30** (3 in stock, reorder at 5), **Cotton T-Shirt Navy / L** (2 in stock) |
+| Low-stock warnings | **Eggs Tray of 30** (2 left after the demo sales, reorder at 5), **Cotton T-Shirt Navy / L** (2 in stock) |
 | Out of stock | **Natural Yoghurt 500ml**, **Gumboots Size 44** (0 in stock) |
 | Cents in a price | **Instant Coffee 100g** (KES 389.50) |
 | A high-value sale | **Solar Lamp** (KES 4,500) |
 
 ## Things to try
 
-- [ ] Open a shift with a float of KES 5,000, then close it and count the cash. Check the variance and the Z-report.
+- [ ] Sign in as `demo.manager@` and open **Today** and **Reports** for the demo sales.
+- [ ] Open a shift on `T2` with a float of KES 5,000, then close it and count the cash. Check the variance and the Z-report.
 - [ ] Ring up the VAT-split basket above. Check each rate on the receipt.
 - [ ] Sell 0.750 kg of avocado and 2.5 m of kitenge.
 - [ ] Give a discount as the cashier, then approve it with the manager's staff code and PIN.
 - [ ] Void a sale, then refund part of another.
-- [ ] Sell the last Eggs tray, then try to sell an out-of-stock item.
-- [ ] Attach Limuru Hotel Supplies to a sale and pay **on account**. Check it counts against the KES 50,000 credit limit.
+- [ ] Sell the last two Eggs trays, then try to sell an out-of-stock item.
+- [ ] Attach Limuru Hotel Supplies to a sale.
 - [ ] Go offline (turn off the network), make two sales, come back online, and check both sync.
 - [ ] Sign in as `demo.auditor@` and confirm it can read reports but not sell or edit.
+- [ ] Sign in as `demo.admin@` and confirm the owner's row in **Administration** can't be edited.
 
 Payments: only **cash** works for now. M-PESA and card terminals are switched off on
 the server until their credentials are configured.
