@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Permission, Role } from '@pos/shared';
-import { api, setSession, onAuthChange, refreshSession } from './api.js';
+import { api, setSession, onAuthChange, refreshSessionOutcome } from './api.js';
 import { clearLocalData, getMeta, setMeta } from './db.js';
 
 export interface SessionUser {
@@ -31,6 +31,40 @@ interface AuthState {
   setTerminal: (storeId: string, terminalId: string) => Promise<void>;
 }
 
+/**
+ * The last confirmed signed-in user, kept on the device so a till that reloads
+ * while offline stays usable as that cashier. It holds no credentials: the
+ * server still authorises everything once the till is back online. It is cleared
+ * on sign-out and whenever the server rejects the session, and goes stale with
+ * the refresh token's lifetime.
+ */
+const OFFLINE_SESSION_KEY = 'offlineSession';
+const OFFLINE_SESSION_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+interface OfflineSession {
+  user: SessionUser;
+  confirmedAt: number;
+}
+
+async function rememberSession(user: SessionUser): Promise<void> {
+  await setMeta(OFFLINE_SESSION_KEY, { user, confirmedAt: Date.now() } satisfies OfflineSession);
+}
+
+async function rememberedSession(): Promise<SessionUser | null> {
+  const saved = await getMeta<OfflineSession | null>(OFFLINE_SESSION_KEY, null);
+  if (!saved || Date.now() - saved.confirmedAt > OFFLINE_SESSION_MAX_AGE_MS) return null;
+  return saved.user;
+}
+
+async function ensureDeviceId(): Promise<string> {
+  let deviceId = await getMeta<string | null>('deviceId', null);
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    await setMeta('deviceId', deviceId);
+  }
+  return deviceId;
+}
+
 export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   storeId: null,
@@ -46,11 +80,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (terminalId) await setMeta('terminalId', terminalId);
 
     // A stable per-install id so the server can attribute offline batches.
-    let deviceId = await getMeta<string | null>('deviceId', null);
-    if (!deviceId) {
-      deviceId = crypto.randomUUID();
-      await setMeta('deviceId', deviceId);
-    }
+    const deviceId = await ensureDeviceId();
+    await rememberSession(payload.user);
 
     set({
       user: payload.user,
@@ -72,28 +103,49 @@ export const useAuth = create<AuthState>((set, get) => ({
 
   /** Re-establishes a session from the refresh cookie on page load. */
   async restore() {
+    // Offline, or the server is down: carry on as the cashier last signed in on
+    // this till. Sales queue as usual, and the session renews once it is back.
+    const resumeOffline = async () => {
+      const user = await rememberedSession();
+      if (!user) {
+        set({ ready: true });
+        return;
+      }
+      useNetwork.getState().setServerReachable(false);
+      set({
+        user,
+        storeId: (await getMeta<string | null>('storeId', null)) ?? user.storeIds[0] ?? null,
+        terminalId: await getMeta<string | null>('terminalId', null),
+        deviceId: await ensureDeviceId(),
+        ready: true,
+      });
+    };
+
     try {
-      const ok = await refreshSession();
-      if (!ok) {
+      const outcome = await refreshSessionOutcome();
+      if (outcome === 'unreachable') {
+        await resumeOffline();
+        return;
+      }
+      if (outcome === 'rejected') {
+        // Expired or revoked: it must not come back the next time the till is offline.
+        await setMeta(OFFLINE_SESSION_KEY, null);
         set({ ready: true });
         return;
       }
       const me = await api.get<{ user: SessionUser; terminalId?: string }>('/auth/me');
       const storeId = (await getMeta<string | null>('storeId', null)) ?? me.user.storeIds[0] ?? null;
-      let deviceId = await getMeta<string | null>('deviceId', null);
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        await setMeta('deviceId', deviceId);
-      }
+      await rememberSession(me.user);
       set({
         user: me.user,
         storeId,
         terminalId: me.terminalId ?? (await getMeta<string | null>('terminalId', null)),
-        deviceId,
+        deviceId: await ensureDeviceId(),
         ready: true,
       });
     } catch {
-      set({ ready: true });
+      // The refresh worked but the follow-up did not reach the server.
+      await resumeOffline();
     }
   },
 
@@ -117,9 +169,13 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 }));
 
-// Clear the in-memory user when the API reports the session is gone.
+// Clear the user when the API reports the session is gone, including the copy
+// kept for offline reloads: a session the server ended must not come back.
 onAuthChange((authenticated) => {
-  if (!authenticated) useAuth.setState({ user: null });
+  if (!authenticated) {
+    useAuth.setState({ user: null });
+    void setMeta(OFFLINE_SESSION_KEY, null);
+  }
 });
 
 /* ------------------------------ Connectivity ------------------------------ */

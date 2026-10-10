@@ -150,12 +150,27 @@ export async function pendingCount(): Promise<number> {
 }
 
 /**
+ * What belongs to the device rather than to whoever is signed in: its identity,
+ * its till binding, its offline batch counter and its settings. Losing these on
+ * sign-out turned the till into a new, unregistered device whose offline sales
+ * the server would not accept.
+ */
+const DEVICE_META_KEYS = new Set([
+  'deviceId', 'batchSequence', 'registeredDevice', 'storeId', 'terminalId', 'printerConfig', 'quickKeys',
+]);
+
+/**
  * Wipes cached data on sign-out so a shared till does not leak between staff.
  * The queue and parked baskets are deliberately kept: unsynced sales and a
- * customer's held basket must survive a shift change.
+ * customer's held basket must survive a shift change. So is the device's own
+ * identity, above.
  */
 export async function clearLocalData(): Promise<void> {
-  await Promise.all([db.variants.clear(), db.meta.clear()]);
+  const keys = (await db.meta.toCollection().primaryKeys()) as string[];
+  await Promise.all([
+    db.variants.clear(),
+    db.meta.bulkDelete(keys.filter((key) => !DEVICE_META_KEYS.has(key))),
+  ]);
 }
 
 export async function listParked(): Promise<ParkedSale[]> {

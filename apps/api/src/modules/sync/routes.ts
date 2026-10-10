@@ -41,7 +41,14 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       })
       .onConflictDoUpdate({
         target: syncDevices.deviceId,
-        set: { revokedAt: null, updatedAt: new Date(), label: input.label ?? null },
+        // Registering again re-enables the device and moves it to the till it is now bound to.
+        set: {
+          storeId: input.storeId,
+          terminalId: input.terminalId ?? null,
+          revokedAt: null,
+          updatedAt: new Date(),
+          label: input.label ?? null,
+        },
       })
       .returning();
 

@@ -3,6 +3,7 @@ import { useApi } from '../lib/useApi.js';
 import { useAuth, toast } from '../lib/store.js';
 import { Field } from '../components/ui.js';
 import { setMeta } from '../lib/db.js';
+import { resetCatalogue, runSync } from '../lib/sync.js';
 
 interface Context {
   stores: Array<{
@@ -51,8 +52,16 @@ export default function TillSetup({ onDone }: { onDone?: () => void }) {
     const chosen = data?.stores.find((s) => s.id === store);
     if (chosen) await setMeta('storeProfile', chosen);
 
+    const previousStore = storeId;
     await setTerminal(store, terminal);
     toast.success('This device is now set up for that till');
+
+    // Sync now rather than on the next cycle, so the catalogue is on the device
+    // (and the till registered) before the connection can drop. Stock levels
+    // belong to a store, so a till moved to another store starts from a fresh
+    // snapshot of that store.
+    if (previousStore !== store) void resetCatalogue();
+    else void runSync();
     onDone?.();
   }
 

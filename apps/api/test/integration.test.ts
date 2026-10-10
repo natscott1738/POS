@@ -1008,3 +1008,47 @@ describe('owner account', () => {
     expect(own.statusCode).toBe(200);
   });
 });
+
+describe('sync device registration', () => {
+  it('lets an administrator register a till, and re-registering moves it', async () => {
+    const { db } = await import('../src/db/client.js');
+    const schema = await import('../src/db/schema/index.js');
+    const { eq } = await import('drizzle-orm');
+    const newDevice = randomUUID();
+
+    // Cashiers cannot enrol devices: a revoked tablet must not re-enrol itself.
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sync/devices',
+      headers: auth(cashierToken),
+      payload: { deviceId: newDevice, storeId, terminalId },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const registered = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sync/devices',
+      headers: auth(adminToken),
+      payload: { deviceId: newDevice, storeId, terminalId, label: 'Till app on Android' },
+    });
+    expect(registered.statusCode).toBe(201);
+
+    // Regression: re-registering only cleared the revoked flag, so a till moved
+    // to another terminal kept its old binding.
+    const [otherTerminal] = await db
+      .insert(schema.terminals)
+      .values({ storeId, code: 'T2', name: 'Second till', receiptPrefix: 'TSTT2' })
+      .returning();
+    await db.update(schema.syncDevices).set({ revokedAt: new Date() }).where(eq(schema.syncDevices.deviceId, newDevice));
+    const moved = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sync/devices',
+      headers: auth(adminToken),
+      payload: { deviceId: newDevice, storeId, terminalId: otherTerminal!.id },
+    });
+    expect(moved.statusCode).toBe(201);
+    const [device] = await db.select().from(schema.syncDevices).where(eq(schema.syncDevices.deviceId, newDevice));
+    expect(device!.terminalId).toBe(otherTerminal!.id);
+    expect(device!.revokedAt).toBeNull();
+  });
+});

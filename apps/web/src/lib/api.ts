@@ -12,7 +12,7 @@ const BASE = '/api/v1';
 
 let accessToken: string | null = null;
 let csrfToken: string | null = null;
-let refreshPromise: Promise<boolean> | null = null;
+let refreshPromise: Promise<RefreshOutcome> | null = null;
 
 /**
  * Reads the CSRF token from its cookie.
@@ -109,10 +109,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   // One transparent refresh attempt, then give up and surface the failure.
   if (response.status === 401 && retryOnUnauthorised && path !== '/auth/refresh') {
-    const refreshed = await refreshSession();
-    if (refreshed) {
+    const outcome = await refreshSessionOutcome();
+    if (outcome === 'ok') {
       return request<T>(path, { ...options, retryOnUnauthorised: false });
     }
+    // Losing the network mid-refresh is an outage, not a sign-out.
+    if (outcome === 'unreachable') throw new ApiError('NETWORK', 'Cannot reach the server', 0);
     setSession(null, null);
   }
 
@@ -140,11 +142,18 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return payload as T;
 }
 
+/**
+ * How a session refresh ended. "Unreachable" (no network, or the server failing)
+ * is not "rejected": a till that reloads during an outage is still the same
+ * cashier's till, and must not be treated as signed out.
+ */
+export type RefreshOutcome = 'ok' | 'rejected' | 'unreachable';
+
 /** Rotates the session. Concurrent callers share one in-flight refresh. */
-export async function refreshSession(): Promise<boolean> {
+export async function refreshSessionOutcome(): Promise<RefreshOutcome> {
   if (refreshPromise) return refreshPromise;
 
-  refreshPromise = (async () => {
+  refreshPromise = (async (): Promise<RefreshOutcome> => {
     try {
       const headers: Record<string, string> = { Accept: 'application/json' };
       // Falls back to the cookie, which is what survives a reload.
@@ -156,13 +165,15 @@ export async function refreshSession(): Promise<boolean> {
         headers,
         credentials: 'same-origin',
       });
-      if (!response.ok) return false;
+      // A 5xx is the server (or the proxy in front of it) failing, not a verdict on the session.
+      if (response.status >= 500) return 'unreachable';
+      if (!response.ok) return 'rejected';
 
       const body = (await response.json()) as { accessToken: string; csrfToken: string };
       setSession(body.accessToken, body.csrfToken);
-      return true;
+      return 'ok';
     } catch {
-      return false;
+      return 'unreachable';
     } finally {
       refreshPromise = null;
     }

@@ -23,7 +23,42 @@ async function waitForServiceWorker(page: Page): Promise<void> {
   await page.waitForTimeout(1500);
 }
 
+const ADMIN = { email: 'admin@tigonigrown.com', password: 'ChangeMe!Admin2024' };
+
 test.describe('offline capability', () => {
+  // Regression: a reload during an outage dropped a signed-in cashier to the
+  // sign-in screen, and signing in needs the server, so the till was unusable
+  // until the connection came back.
+  test('keeps a signed-in till usable after an offline reload', async ({ page, context }) => {
+    await page.goto('/');
+    await page.evaluate(async () => {
+      await new Promise((resolve) => {
+        const request = indexedDB.deleteDatabase('pos-till');
+        request.onsuccess = resolve;
+        request.onerror = resolve;
+        request.onblocked = resolve;
+      });
+    });
+    await page.reload();
+
+    await page.getByRole('button', { name: 'Email' }).click();
+    await page.getByLabel('Email').fill(ADMIN.email);
+    await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByText('Set up this till')).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: 'Use this till' }).click();
+    await expect(page.getByLabel('Scan or search')).toBeVisible({ timeout: 15_000 });
+    await waitForServiceWorker(page);
+
+    await context.setOffline(true);
+    await page.reload();
+
+    await expect(page.getByLabel('Scan or search')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.pill.offline')).toBeVisible();
+
+    await context.setOffline(false);
+  });
+
   test('registers a service worker and precaches the app shell', async ({ page }) => {
     await page.goto('/');
     await waitForServiceWorker(page);

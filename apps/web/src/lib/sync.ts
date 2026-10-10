@@ -18,6 +18,40 @@ let running = false;
 const PUSH_BATCH_SIZE = 100;
 const INTERVAL_MS = 20_000;
 
+let warnedUnregistered = false;
+
+/**
+ * The server only accepts offline batches from a registered device, and only an
+ * administrator may register one, so that a revoked tablet cannot re-enrol itself.
+ * The till therefore registers itself whenever an administrator is signed in on
+ * it. Until then queued sales wait safely in the queue.
+ */
+async function ensureRegistered(storeId: string, terminalId: string | null, deviceId: string): Promise<boolean> {
+  const key = `${deviceId}:${storeId}:${terminalId ?? ''}`;
+  if ((await getMeta<string | null>('registeredDevice', null)) === key) return true;
+  if (!useAuth.getState().can('store:write')) return false;
+
+  await api.post('/sync/devices', {
+    deviceId,
+    storeId,
+    ...(terminalId ? { terminalId } : {}),
+    label: deviceLabel(),
+  });
+  await setMeta('registeredDevice', key);
+  return true;
+}
+
+function deviceLabel(): string {
+  const ua = navigator.userAgent;
+  const os = /Android/.test(ua) ? 'Android'
+    : /iPhone|iPad/.test(ua) ? 'iOS'
+    : /Windows/.test(ua) ? 'Windows'
+    : /Mac OS/.test(ua) ? 'macOS'
+    : /Linux/.test(ua) ? 'Linux'
+    : 'unknown system';
+  return `Till app on ${os}`;
+}
+
 export function startSync(): void {
   if (timer) return;
   void runSync();
@@ -43,7 +77,13 @@ export async function runSync(): Promise<void> {
   useNetwork.getState().setSyncing(true);
 
   try {
-    await pushQueue(storeId, terminalId, deviceId);
+    const registered = await ensureRegistered(storeId, terminalId, deviceId);
+    if (registered) {
+      await pushQueue(storeId, terminalId, deviceId);
+    } else if ((await pendingCount()) > 0 && !warnedUnregistered) {
+      warnedUnregistered = true;
+      toast.warning('Sales made offline are saved on this till. They upload once an administrator signs in on it.');
+    }
     await pullCatalogue(storeId, deviceId);
     useNetwork.getState().setServerReachable(true);
     useNetwork.getState().markSynced();
@@ -51,6 +91,8 @@ export async function runSync(): Promise<void> {
     if (err instanceof ApiError && err.code === 'NETWORK') {
       useNetwork.getState().setServerReachable(false);
     } else {
+      // The server answered, so it is reachable even though this sync failed.
+      useNetwork.getState().setServerReachable(true);
       console.error('sync failed', err);
     }
   } finally {
@@ -122,6 +164,9 @@ async function pushQueue(storeId: string, terminalId: string | null, deviceId: s
       }
     }
   } catch (err) {
+    // The server no longer knows this device (never registered, or its records
+    // were reset): register it again on the next cycle where that is possible.
+    if (err instanceof ApiError && err.status === 404) await setMeta('registeredDevice', null);
     // Put everything back so the batch is retried intact on the next cycle.
     await db.queue.bulkPut(
       queued.map((op) => ({
