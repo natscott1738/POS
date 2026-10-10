@@ -956,7 +956,7 @@ describe('multi-store isolation', () => {
 describe('owner account', () => {
   // Regression: any administrator could reset the owner's password and read the
   // temporary one, taking over the account the deployment was bootstrapped with.
-  it('refuses changes to the owner from any other administrator', async () => {
+  it('hides the owner from other administrators and refuses their changes', async () => {
     const { db } = await import('../src/db/client.js');
     const { users } = await import('../src/db/schema/index.js');
     const { eq } = await import('drizzle-orm');
@@ -991,6 +991,12 @@ describe('owner account', () => {
       const response = await app.inject({ ...attempt, headers: auth(otherAdmin) });
       expect(response.statusCode, `${attempt.method} ${attempt.url}`).toBe(403);
     }
+
+    // Nor can they see it: the owner is left out of everyone else's staff list.
+    const othersView = await app.inject({ method: 'GET', url: '/api/v1/admin/users', headers: auth(otherAdmin) });
+    expect(othersView.json().users.map((u: { id: string }) => u.id)).not.toContain(owner!.id);
+    const ownView = await app.inject({ method: 'GET', url: '/api/v1/admin/users', headers: auth(adminToken) });
+    expect(ownView.json().users.map((u: { id: string }) => u.id)).toContain(owner!.id);
 
     // The owner can still change their own account.
     const own = await app.inject({

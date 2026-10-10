@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createUserSchema, updateUserSchema, uuid, safeText, ROLES, permissionsForRole } from '@pos/shared';
 import { db } from '../../db/client.js';
@@ -33,7 +33,8 @@ async function loadManagedUser(request: FastifyRequest, id: string) {
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   /* ---------------------------------- Users --------------------------------- */
 
-  app.get('/users', { preHandler: requirePermissions('user:read') }, async () => {
+  app.get('/users', { preHandler: requirePermissions('user:read') }, async (request) => {
+    const auth = getAuth(request);
     const rows = await db
       .select({
         id: users.id,
@@ -49,7 +50,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         createdAt: users.createdAt,
       })
       .from(users)
-      .where(isNull(users.deletedAt))
+      // Other administrators do not see the owner's account at all, so there is
+      // nothing of it for them to open; only the owner sees their own row.
+      .where(and(isNull(users.deletedAt), or(eq(users.isOwner, false), eq(users.id, auth.userId))))
       .orderBy(users.fullName);
 
     const assignments = await db.select().from(userStores);
