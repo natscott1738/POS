@@ -40,6 +40,8 @@ interface User {
   role: Role;
   staffCode: string | null;
   isActive: boolean;
+  /** Only the owner can change the owner's account. */
+  isOwner: boolean;
   mfaEnabled: boolean;
   lockedUntil: string | null;
   lastLoginAt: string | null;
@@ -48,6 +50,7 @@ interface User {
 
 function Users() {
   const can = useAuth((s) => s.can);
+  const myId = useAuth((s) => s.user?.id);
   const { data, loading, reload } = useApi<{ users: User[] }>('/admin/users');
   const stores = useApi<{ stores: Array<{ id: string; name: string }> }>('/admin/stores');
   const [editing, setEditing] = useState<User | 'new' | null>(null);
@@ -74,7 +77,10 @@ function Users() {
                 <tr key={user.id}>
                   <td>{user.fullName}</td>
                   <td className="muted">{user.email}</td>
-                  <td><Badge>{user.role}</Badge></td>
+                  <td>
+                    <Badge>{user.role}</Badge>
+                    {user.isOwner && <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>owner</span>}
+                  </td>
                   <td className="mono">{user.staffCode ?? '—'}</td>
                   <td>
                     {!user.isActive ? <Badge tone="danger">disabled</Badge>
@@ -86,7 +92,9 @@ function Users() {
                     {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : 'never'}
                   </td>
                   <td className="right">
-                    {can('user:write') && (
+                    {user.isOwner && user.id !== myId ? (
+                      <span className="muted" style={{ fontSize: 12 }}>Only the owner can change this account</span>
+                    ) : can('user:write') && (
                       <>
                         <button className="btn ghost" style={btnSmall} onClick={() => setEditing(user)}>Edit</button>
                         {user.lockedUntil && new Date(user.lockedUntil) > new Date() && (

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { boolean, index, inet, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, pk, tsCol, updatedAt } from './columns.js';
 import { roleEnum } from './enums.js';
@@ -14,6 +15,12 @@ export const users = pgTable(
     passwordHash: text('password_hash').notNull(),
     passwordChangedAt: tsCol('password_changed_at').notNull().defaultNow(),
     mustChangePassword: boolean('must_change_password').notNull().default(false),
+    /**
+     * The administrator the deployment was bootstrapped with. Only they can change
+     * their own account: otherwise any administrator could reset the owner's
+     * password, take the temporary one, and lock them out of their own system.
+     */
+    isOwner: boolean('is_owner').notNull().default(false),
 
     /** Short till code + PIN, only usable from a registered terminal. */
     staffCode: text('staff_code'),
@@ -39,6 +46,8 @@ export const users = pgTable(
   (t) => [
     uniqueIndex('users_email_uq').on(t.email),
     uniqueIndex('users_staff_code_uq').on(t.staffCode),
+    // There is only ever one owner.
+    uniqueIndex('users_single_owner_uq').on(t.isOwner).where(sql`${t.isOwner}`),
     index('users_role_idx').on(t.role),
   ],
 );

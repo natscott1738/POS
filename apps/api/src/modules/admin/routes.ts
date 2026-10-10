@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createUserSchema, updateUserSchema, uuid, safeText, ROLES, permissionsForRole } from '@pos/shared';
@@ -16,6 +16,20 @@ import { runBackup, listBackups, verifyBackup, backupHealth } from '../../jobs/b
 
 const idParam = z.object({ id: uuid });
 
+/**
+ * Loads a user that an administrator is about to change. The owner's account is
+ * refused to everyone but the owner: any administrator could otherwise reset the
+ * owner's password, read the temporary one, and take over the system.
+ */
+async function loadManagedUser(request: FastifyRequest, id: string) {
+  const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  if (!user) throw notFound('User');
+  if (user.isOwner && user.id !== getAuth(request).userId) {
+    throw forbidden('Only the account owner can change this account');
+  }
+  return user;
+}
+
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   /* ---------------------------------- Users --------------------------------- */
 
@@ -28,6 +42,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         role: users.role,
         staffCode: users.staffCode,
         isActive: users.isActive,
+        isOwner: users.isOwner,
         mfaEnabled: users.mfaEnabled,
         lockedUntil: users.lockedUntil,
         lastLoginAt: users.lastLoginAt,
@@ -105,9 +120,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const auth = getAuth(request);
     const { id } = parseParams(request, idParam);
     const input = parseBody(request, updateUserSchema);
-
-    const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-    if (!existing) throw notFound('User');
+    const existing = await loadManagedUser(request, id);
 
     if (input.role && input.role !== existing.role && auth.role !== 'ADMIN') {
       throw forbidden('Only an administrator can change roles');
@@ -159,8 +172,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/users/:id/reset-password', { preHandler: requirePermissions('user:write') }, async (request) => {
     const { id } = parseParams(request, idParam);
-    const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-    if (!user) throw notFound('User');
+    await loadManagedUser(request, id);
 
     // A random temporary password, shown once and never stored in the clear.
     const temporary = generateToken(12);
@@ -183,6 +195,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/users/:id/unlock', { preHandler: requirePermissions('user:write') }, async (request) => {
     const { id } = parseParams(request, idParam);
+    await loadManagedUser(request, id);
     await db.update(users).set({ lockedUntil: null, failedLoginCount: 0 }).where(eq(users.id, id));
     await writeAudit(db, request, { action: 'USER_UNLOCKED', entityType: 'USER', entityId: id });
     return { ok: true };
@@ -192,9 +205,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const auth = getAuth(request);
     const { id } = parseParams(request, idParam);
     if (id === auth.userId) throw badRequest('You cannot delete your own account');
-
-    const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-    if (!user) throw notFound('User');
+    await loadManagedUser(request, id);
 
     // Soft delete: sales reference the cashier and that link must survive.
     await db

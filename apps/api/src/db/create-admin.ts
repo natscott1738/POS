@@ -17,6 +17,9 @@ import { writeAudit } from '../core/audit.js';
  * for minting more. Further accounts are created by an admin through the API,
  * where they are authenticated and audited against a real actor.
  *
+ * The administrator it creates is the owner: no other administrator can change,
+ * reset, unlock or delete their account.
+ *
  * The password is generated, printed once, and must be changed at first sign-in.
  *
  *   node dist/db/create-admin.js --email you@example.com [--name "Full Name"] [--staff-code ADM001]
@@ -76,6 +79,7 @@ async function main(): Promise<void> {
         email: input.email,
         fullName: input.name,
         role: 'ADMIN',
+        isOwner: true,
         passwordHash: await hashPassword(password),
         staffCode: input.staffCode ?? null,
         pinHash: pin ? await hashPin(pin) : null,

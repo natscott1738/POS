@@ -952,3 +952,53 @@ describe('multi-store isolation', () => {
     expect(response.statusCode).toBe(403);
   });
 });
+
+describe('owner account', () => {
+  // Regression: any administrator could reset the owner's password and read the
+  // temporary one, taking over the account the deployment was bootstrapped with.
+  it('refuses changes to the owner from any other administrator', async () => {
+    const { db } = await import('../src/db/client.js');
+    const { users } = await import('../src/db/schema/index.js');
+    const { eq } = await import('drizzle-orm');
+    const [owner] = await db
+      .update(users)
+      .set({ isOwner: true })
+      .where(eq(users.email, 'admin@test.local'))
+      .returning({ id: users.id, fullName: users.fullName });
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/users',
+      headers: auth(adminToken),
+      payload: {
+        email: 'second.admin@test.local',
+        fullName: 'Second Admin',
+        role: 'ADMIN',
+        password: 'quartz-meadow-signal-42',
+        storeIds: [storeId],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const otherAdmin = await signIn('second.admin@test.local', 'quartz-meadow-signal-42');
+
+    const attempts = [
+      { method: 'PATCH', url: `/api/v1/admin/users/${owner!.id}`, payload: { fullName: 'Taken Over' } },
+      { method: 'POST', url: `/api/v1/admin/users/${owner!.id}/reset-password` },
+      { method: 'POST', url: `/api/v1/admin/users/${owner!.id}/unlock` },
+      { method: 'DELETE', url: `/api/v1/admin/users/${owner!.id}` },
+    ] as const;
+    for (const attempt of attempts) {
+      const response = await app.inject({ ...attempt, headers: auth(otherAdmin) });
+      expect(response.statusCode, `${attempt.method} ${attempt.url}`).toBe(403);
+    }
+
+    // The owner can still change their own account.
+    const own = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/users/${owner!.id}`,
+      headers: auth(adminToken),
+      payload: { fullName: owner!.fullName },
+    });
+    expect(own.statusCode).toBe(200);
+  });
+});

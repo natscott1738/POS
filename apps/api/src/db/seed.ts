@@ -85,6 +85,7 @@ async function main(): Promise<void> {
         email: person.email,
         fullName: person.fullName,
         role: person.role,
+        isOwner: person.role === 'ADMIN',
         passwordHash: await hashPassword(adminPassword),
         staffCode: person.staffCode,
         pinHash: await hashPin(person.pin),
