@@ -5,6 +5,7 @@ export * from './catalog.js';
 export * from './inventory.js';
 export * from './customers.js';
 export * from './sales.js';
+export * from './credit.js';
 export * from './payments.js';
 export * from './sync.js';
 export * from './quickbooks.js';

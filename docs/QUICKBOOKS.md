@@ -16,7 +16,9 @@ global edition, and VAT handling differs from the US edition.
 ### 2. An Intuit Developer account and app
 
 1. Sign up at <https://developer.intuit.com> (free)
-2. **Create an app** → choose **QuickBooks Online and Payments**
+2. **Create an app** for QuickBooks Online and select the **Accounting** scope.
+   This POS requests accounting access only; it does not request the QuickBooks
+   Payments scope.
 3. Under **Keys & credentials** you get two sets:
    - **Development keys** — for the sandbox, available immediately
    - **Production keys** — released after Intuit reviews the app
@@ -86,9 +88,14 @@ dropdowns, not free text.
 |---|---|---|
 | **Sales income account** | The income account takings belong to | Where revenue lands |
 | **Default deposit account** | Fallback for any tender with no specific account | Catch-all |
-| **Standard VAT code** | The 16% code from their chart | Drives the VAT return |
+| **Standard VAT code** | The accountant-approved standard rate code | Drives the VAT posting |
+| **Zero-rated / exempt VAT codes** | Map each code used in the POS catalogue | Prevents taxable items falling into the wrong category |
+| **Cash rounding account** | Income account, if the till uses cash rounding | Keeps rounded receipt totals aligned |
 | **Payment method accounts** | **One per tender** | See below |
-| **Posting mode** | Per sale, or one daily summary | Per sale unless volume is very high |
+
+This integration currently posts one document per sale. Daily summary posting is
+not implemented; do not configure the stored legacy `DAILY_SUMMARY` value as if
+it changes the worker's behavior.
 
 ### Map each tender to its own account
 

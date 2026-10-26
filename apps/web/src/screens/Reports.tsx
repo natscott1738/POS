@@ -314,7 +314,7 @@ function ProductsReport({ range, canExport }: { range: string; canExport: boolea
 function Payments({ range, canExport }: { range: string; canExport: boolean }) {
   const { data, loading } = useApi<{
     methods: Array<{ method: string; transactionCount: number; collected: number; refunded: number; net: number; shareBasisPoints: number }>;
-    totals: { collected: number; refunded: number; net: number };
+    totals: { collected: number; refunded: number; net: number; creditSales?: number; creditCollections?: number };
   }>(`/reports/payments?${range}`, [range]);
 
   if (loading) return <Loading />;
@@ -326,6 +326,8 @@ function Payments({ range, canExport }: { range: string; canExport: boolean }) {
         <div className="stat"><div className="label">Collected</div><div className="value">{formatCents(data.totals.collected)}</div></div>
         <div className="stat"><div className="label">Refunded</div><div className="value">{formatCents(data.totals.refunded)}</div></div>
         <div className="stat"><div className="label">Net takings</div><div className="value">{formatCents(data.totals.net)}</div></div>
+        <div className="stat"><div className="label">Account sales</div><div className="value">{formatCents(data.totals.creditSales ?? 0)}</div></div>
+        <div className="stat"><div className="label">Account collections</div><div className="value">{formatCents(data.totals.creditCollections ?? 0)}</div></div>
       </div>
 
       <div className="card" style={{ padding: 0 }}>

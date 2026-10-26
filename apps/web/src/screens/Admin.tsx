@@ -485,7 +485,7 @@ function CardTerminals() {
       </div>
       <div className="card" style={{ padding: 0 }}>
         {loading ? <Loading /> : (data?.terminals.length ?? 0) === 0 ? (
-          <Empty message="No card machine connected. Cashiers can still take card payments on a standalone machine and record the approval code." />
+        <Empty message="No integrated card machine is configured. Standalone terminal approvals are not currently recorded by the POS; configure an ECR_HTTP bridge for integrated card checkout." />
         ) : (
           <table>
             <thead><tr><th>Label</th><th>Type</th><th>Acquirer</th><th>Endpoint</th><th>Secret</th><th>Status</th></tr></thead>

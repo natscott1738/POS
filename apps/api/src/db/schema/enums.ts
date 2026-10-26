@@ -24,3 +24,6 @@ export const qbEntityEnum = pgEnum('qb_entity', [
 ]);
 export const shiftStatusEnum = pgEnum('shift_status', ['OPEN', 'CLOSED', 'RECONCILED']);
 export const backupStatusEnum = pgEnum('backup_status', ['RUNNING', 'SUCCESS', 'FAILED', 'VERIFIED']);
+export const creditTransactionTypeEnum = pgEnum('credit_transaction_type', [
+  'CHARGE', 'PAYMENT', 'ADJUSTMENT', 'REFUND', 'VOID_REVERSAL',
+]);

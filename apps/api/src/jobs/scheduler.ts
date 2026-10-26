@@ -52,7 +52,7 @@ export function startScheduler(log: FastifyBaseLogger): void {
 
   if (env.PDQ_ENABLED) {
     jobs.push(
-      new Cron('*/120 * * * * *', { name: 'pdq-expire', protect: true }, () =>
+      new Cron('0 */2 * * * *', { name: 'pdq-expire', protect: true }, () =>
         track(log, 'pdq-expire', async () => ({ expired: await expireStalePdqTransactions() })),
       ),
     );
@@ -127,4 +127,3 @@ async function track(
     }
   }
 }
-

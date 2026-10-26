@@ -12,6 +12,9 @@ import {
   stores,
   products,
   productVariants,
+  creditTransactions,
+  creditAccounts,
+  creditAllocations,
 } from '../../db/schema/index.js';
 import { notFound, AppError } from '../../core/errors.js';
 import { ERROR_CODES, type QbEntity } from '@pos/shared';
@@ -120,6 +123,10 @@ export async function buildSalesReceipt(saleId: string): Promise<SalesReceiptPay
   ]);
 
   const onAccount = tenders.some((t) => t.method === 'ON_ACCOUNT' && t.amount > 0);
+  const [creditCharge] = onAccount
+    ? await db.select({ dueAt: creditTransactions.dueAt }).from(creditTransactions)
+        .where(and(eq(creditTransactions.saleId, saleId), eq(creditTransactions.type, 'CHARGE'))).limit(1)
+    : [];
 
   const customerRef = await resolveCustomerRef(sale.customerId, mapping);
 
@@ -171,7 +178,7 @@ export async function buildSalesReceipt(saleId: string): Promise<SalesReceiptPay
   };
 
   if (onAccount) {
-    payload.DueDate = sale.soldAt.toISOString().slice(0, 10);
+    payload.DueDate = (creditCharge?.dueAt ?? sale.soldAt).toISOString().slice(0, 10);
     return { payload, documentType: 'INVOICE' };
   }
 
@@ -187,6 +194,49 @@ export async function buildSalesReceipt(saleId: string): Promise<SalesReceiptPay
   }
 
   return { payload, documentType: 'SALES_RECEIPT' };
+}
+
+/** Build a customer payment linked to the invoices the POS allocated it to. */
+export async function buildCreditPayment(creditTransactionId: string): Promise<Record<string, unknown>> {
+  const [entry] = await db.select().from(creditTransactions)
+    .where(eq(creditTransactions.id, creditTransactionId)).limit(1);
+  if (!entry || entry.type !== 'PAYMENT' || !entry.paymentMethod) throw notFound('Credit payment');
+  const [account] = await db.select().from(creditAccounts).where(eq(creditAccounts.id, entry.accountId)).limit(1);
+  if (!account) throw notFound('Credit account');
+  const mapping = await loadMapping(entry.storeId);
+  const allocations = await db.select().from(creditAllocations)
+    .where(eq(creditAllocations.creditTransactionId, entry.id));
+  const chargeIds = allocations.map((allocation) => allocation.chargeTransactionId);
+  const charges = chargeIds.length > 0
+    ? await db.select().from(creditTransactions).where(inArray(creditTransactions.id, chargeIds))
+    : [];
+  const chargeById = new Map(charges.map((charge) => [charge.id, charge]));
+
+  const lines: Array<Record<string, unknown>> = [];
+  for (const allocation of allocations) {
+    const charge = chargeById.get(allocation.chargeTransactionId);
+    if (!charge?.saleId) {
+      throw new AppError(409, ERROR_CODES.CONFLICT, 'QuickBooks cannot apply this payment to an account adjustment without a linked invoice');
+    }
+    const invoice = await linkedQbId(entry.storeId, 'INVOICE', charge.saleId);
+    if (!invoice) throw new AppError(409, ERROR_CODES.CONFLICT, 'The related invoice has not synced to QuickBooks yet');
+    lines.push({
+      Amount: toDecimal(Number(allocation.amount)),
+      LinkedTxn: [{ TxnId: invoice.qbId, TxnType: 'Invoice' }],
+    });
+  }
+  if (lines.length === 0) throw new AppError(409, ERROR_CODES.CONFLICT, 'This customer payment is not allocated to an invoice');
+
+  const customerRef = await resolveCustomerRef(account.customerId, mapping);
+  return {
+    CustomerRef: customerRef,
+    TotalAmt: toDecimal(-Number(entry.amount)),
+    TxnDate: entry.createdAt.toISOString().slice(0, 10),
+    DepositToAccountRef: { value: mapping.paymentAccounts[entry.paymentMethod] ?? mapping.undepositedFundsAccountId },
+    PaymentMethodRef: { name: entry.paymentMethod },
+    PrivateNote: `POS account payment${entry.reference ? ` ${entry.reference}` : ''}${entry.note ? ` · ${entry.note}` : ''}`.slice(0, 1000),
+    Line: lines,
+  };
 }
 
 export async function buildRefundReceipt(refundId: string): Promise<Record<string, unknown>> {

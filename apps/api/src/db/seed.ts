@@ -13,6 +13,7 @@ import {
   priceHistory,
   stockLevels,
   customers,
+  creditAccounts,
   syncDevices,
 } from './schema/index.js';
 import { hashPassword, hashPin } from '../auth/password.js';
@@ -226,6 +227,16 @@ async function main(): Promise<void> {
       { fullName: 'Acme Trading Ltd', phone: '254733111222', taxPin: 'P051111111A', creditLimit: 500_000, marketingConsent: false },
     ])
     .onConflictDoNothing();
+
+  const [acme] = await db.select({ id: customers.id }).from(customers).where(eq(customers.phone, '254733111222')).limit(1);
+  if (acme) {
+    await db.insert(creditAccounts).values({
+      customerId: acme.id,
+      storeId,
+      creditLimit: 500_000,
+      termsDays: 30,
+    }).onConflictDoNothing();
+  }
 
   /* eslint-disable no-console */
   console.log('\nSeed complete.\n');

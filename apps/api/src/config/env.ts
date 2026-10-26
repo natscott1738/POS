@@ -125,6 +125,8 @@ const schema = z.object({
   MPESA_CONSUMER_KEY: z.string().optional(),
   MPESA_CONSUMER_SECRET: z.string().optional(),
   MPESA_SHORTCODE: z.string().optional(),
+  /** STK recipient; may differ from the go-live BusinessShortCode for a Till. */
+  MPESA_PARTY_B: z.string().optional(),
   MPESA_PASSKEY: z.string().optional(),
   /** Distinguishes till (CustomerBuyGoodsOnline) from paybill (CustomerPayBillOnline). */
   MPESA_TRANSACTION_TYPE: z

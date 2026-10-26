@@ -3,7 +3,7 @@
 Two commands. One proves the system is correct; the other lets you use it.
 
 ```bash
-make verify      # every automated check, ~3 minutes
+make verify      # every automated check, about 5–7 minutes
 make demo        # start it up and click through it yourself
 ```
 
@@ -25,7 +25,9 @@ It covers, in order:
 | Browser tests | The real UI, end to end, **including offline with the network cut** |
 | Dependency audit | No high or critical vulnerabilities |
 
-A green run means 65 unit/integration tests and 9 browser tests passed.
+A green run currently means 83 unit/integration tests and 15 browser tests
+passed. Credit ledger posting and reconciliation are checked at the API layer,
+and account list/detail access is checked in the production browser build.
 
 If something fails it prints the failing assertion and keeps the logs, telling
 you where.
@@ -82,7 +84,9 @@ Type into the scan box and press Enter — exactly what a hardware scanner does.
 
 The part worth seeing with your own eyes.
 
-1. **Load and sign in**, then wait about five seconds for the service worker to
+1. **Load and sign in as an administrator**, bind this browser profile to one
+   store/till, open a shift, and wait until catalogue sync completes. This is
+   required before the till can operate offline. Wait for the service worker to
    finish caching. (Check: DevTools → Application → Service Workers shows one
    *activated and running*.)
 
@@ -92,15 +96,20 @@ The part worth seeing with your own eyes.
 3. **Reload the page.** It still loads. This is the thing that was broken before:
    without a service worker you would get a browser error page and the shop stops.
 
-4. **Sell something.** Scan an item, take a cash payment, complete the sale. The
-   badge in the top bar shows **Offline · 1 queued**.
+4. **Sell something.** Scan a cached item, take a cash payment, complete the
+   sale. Electronic and customer-account tenders are disabled offline. The
+   receipt is labeled `OFFLINE-…` and the badge shows **Offline · 1 queued**.
 
 5. **Go back online.** Set throttling to *No throttling*. Within about twenty
    seconds the badge returns to **Online** and the queue empties. You can click
    the badge to sync immediately.
 
 6. **Check it arrived.** Go to **Sales** — the sale is there with a real receipt
-   number, marked as created offline.
+   number, marked as created offline. Confirm the local queued count is zero.
+
+Do not clear the browser profile or reinstall/reset this till while the queued
+count is nonzero. Browser storage persistence is requested where supported, but
+local browser data is not part of the server backup.
 
 ### The thing worth trying twice
 
@@ -121,6 +130,10 @@ Be aware of these when judging readiness:
   Settings → Receipt printer, then use *Print test receipt*. The browser fallback
   works without hardware but is not a real receipt.
 - **Cash drawer.** Fires through the printer, so it needs one.
+- **PDQ hardware.** Needs the client's acquirer terminal and a compatible ECR
+  bridge. The simulator is not a live payment. Current checkout does not resolve
+  asynchronous pending terminal results.
+- **Scales and customer displays.** No hardware protocol is implemented.
 - **M-PESA.** No Daraja credentials, so the live path has never run. The code is
   written to the documented API and the callback handling is covered by tests,
   but it has not spoken to Safaricom.

@@ -93,7 +93,56 @@ test.describe('checkout journey', () => {
     await expect(page.getByText('Empty')).toBeVisible();
   });
 
-  test('blocks checkout until the till is bound to a store', async ({ page }) => {
+  test('simulates an approved card sale and a declined card attempt', async ({ page }) => {
+    await page.getByRole('button', { name: 'Email' }).click();
+    await page.getByLabel('Email').fill(ADMIN.email);
+    await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByText('Set up this till')).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: 'Use this till' }).click();
+    await expect(page.getByLabel('Scan or search')).toBeVisible({ timeout: 15_000 });
+
+    const shiftOpen = page.locator('.pill').filter({ hasText: /^Shift open$/ });
+    if (!(await shiftOpen.isVisible().catch(() => false))) {
+      await page.getByRole('button', { name: 'Open shift' }).first().click();
+      const shiftDialog = page.getByRole('dialog', { name: 'Open shift' });
+      await shiftDialog.getByLabel('Opening float').fill('5000');
+      await shiftDialog.getByRole('button', { name: 'Open shift' }).click();
+      await expect(shiftOpen).toBeVisible({ timeout: 15_000 });
+    }
+
+    await page.getByRole('link', { name: 'Administration' }).click();
+    await page.getByRole('button', { name: 'Card machines' }).click();
+    await page.getByRole('button', { name: 'Add card machine' }).click();
+    const terminalDialog = page.getByRole('dialog', { name: 'Add card machine' });
+    await terminalDialog.getByLabel('Label').fill('Automated card simulator');
+    await terminalDialog.getByLabel('Type').selectOption('SIMULATOR');
+    await terminalDialog.getByRole('button', { name: 'Add terminal' }).click();
+    await expect(page.getByRole('cell', { name: 'Automated card simulator' }).first()).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('link', { name: /Till/ }).click();
+    const scan = page.getByLabel('Scan or search');
+    await scan.fill('6001234500024');
+    await scan.press('Enter');
+    await expect(page.getByText('Kenyan AA Coffee 500g').first()).toBeVisible();
+    await page.getByRole('button', { name: /Take payment/ }).click();
+    await page.getByRole('button', { name: 'Card' }).click();
+    await page.getByRole('button', { name: 'Send to terminal' }).click();
+    await expect(page.locator('.toast.success').filter({ hasText: 'Card approved' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('PDQ').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Complete sale' }).click();
+    await expect(page.getByRole('dialog', { name: 'Payment' })).toBeHidden({ timeout: 15_000 });
+
+    await scan.fill('6001234500024');
+    await scan.press('Enter');
+    await page.getByRole('button', { name: /Take payment/ }).click();
+    await page.getByRole('button', { name: 'Card' }).click();
+    await page.getByLabel('Amount').fill('12.13');
+    await page.getByRole('button', { name: 'Send to terminal' }).click();
+    await expect(page.locator('.toast.error').filter({ hasText: 'Insufficient funds' })).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('blocks checkout until the till is bound, then opens a shift', async ({ page }) => {
     await page.getByRole('button', { name: 'Email' }).click();
     await page.getByLabel('Email').fill(ADMIN.email);
     await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
@@ -104,13 +153,6 @@ test.describe('checkout journey', () => {
     await expect(page.getByText('Set up this till')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByLabel('Store')).toBeVisible();
     await expect(page.getByLabel('Till')).toBeVisible();
-  });
-
-  test('shows the shift strip and opens a shift', async ({ page }) => {
-    await page.getByRole('button', { name: 'Email' }).click();
-    await page.getByLabel('Email').fill(ADMIN.email);
-    await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
     await page.getByRole('button', { name: 'Use this till' }).click();
 
     await expect(page.getByLabel('Scan or search')).toBeVisible({ timeout: 15_000 });

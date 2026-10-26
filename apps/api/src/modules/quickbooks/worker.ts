@@ -5,7 +5,7 @@ import { env } from '../../config/env.js';
 import { randomUUID } from '../../core/crypto.js';
 import { claimJobs, markFailed, markSynced, reclaimStaleJobs } from './queue.js';
 import { activeConnection, qbRequest, QbApiError } from './client.js';
-import { buildSalesReceipt, buildRefundReceipt, buildCustomer, buildItem, linkedQbId } from './mapper.js';
+import { buildSalesReceipt, buildRefundReceipt, buildCreditPayment, buildCustomer, buildItem, linkedQbId } from './mapper.js';
 import { isAppError } from '../../core/errors.js';
 import type { QbEntity } from '@pos/shared';
 
@@ -130,6 +130,21 @@ async function processJob(job: {
       if (!created?.Id) throw new Error('QuickBooks did not return an id');
 
       await recordLink(job.storeId, 'REFUND_RECEIPT', job.localId, created);
+      return created.Id;
+    }
+
+    case 'PAYMENT': {
+      const existing = await linkedQbId(job.storeId, 'PAYMENT', job.localId);
+      if (existing) return existing.qbId;
+      const payload = await buildCreditPayment(job.localId);
+      const response = await qbRequest<{ Payment?: { Id: string; SyncToken?: string } }>(
+        connection,
+        '/payment',
+        { method: 'POST', body: payload, requestId: job.requestIdempotencyKey },
+      );
+      const created = response.Payment;
+      if (!created?.Id) throw new Error('QuickBooks did not return a payment id');
+      await recordLink(job.storeId, 'PAYMENT', job.localId, created);
       return created.Id;
     }
 

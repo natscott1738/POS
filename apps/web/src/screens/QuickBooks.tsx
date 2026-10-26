@@ -151,8 +151,10 @@ function MappingForm({ storeId, configured, onSaved }: { storeId: string; config
   const [incomeAccountId, setIncome] = useState('');
   const [undepositedFundsAccountId, setUndeposited] = useState('');
   const [taxCodeIdStandard, setTaxStandard] = useState('');
+  const [taxCodeIdZeroRated, setTaxZeroRated] = useState('');
+  const [taxCodeIdExempt, setTaxExempt] = useState('');
+  const [roundingAccountId, setRoundingAccount] = useState('');
   const [paymentAccounts, setPaymentAccounts] = useState<Record<string, string>>({});
-  const [postingMode, setPostingMode] = useState('PER_SALE');
 
   useEffect(() => {
     const mapping = existing.data?.mapping;
@@ -160,8 +162,10 @@ function MappingForm({ storeId, configured, onSaved }: { storeId: string; config
     setIncome(mapping.incomeAccountId ?? '');
     setUndeposited(mapping.undepositedFundsAccountId ?? '');
     setTaxStandard(mapping.taxCodeIdStandard ?? '');
+    setTaxZeroRated(mapping.taxCodeIdZeroRated ?? '');
+    setTaxExempt(mapping.taxCodeIdExempt ?? '');
+    setRoundingAccount(mapping.roundingAccountId ?? '');
     setPaymentAccounts((mapping.paymentAccounts ?? {}) as Record<string, string>);
-    setPostingMode(mapping.postingMode ?? 'PER_SALE');
   }, [existing.data]);
 
   if (accounts.loading || existing.loading) return <div className="card"><Loading /></div>;
@@ -209,13 +213,26 @@ function MappingForm({ storeId, configured, onSaved }: { storeId: string; config
             {taxCodes.data?.taxCodes.map((t) => <option key={t.Id} value={t.Id}>{t.Name}</option>)}
           </select>
         </Field>
-        <Field label="Posting mode">
-          <select className="input" value={postingMode} onChange={(e) => setPostingMode(e.target.value)}>
-            <option value="PER_SALE">One entry per sale</option>
-            <option value="DAILY_SUMMARY">One summary per day</option>
+        <Field label="Zero-rated VAT code">
+          <select className="input" value={taxCodeIdZeroRated} onChange={(e) => setTaxZeroRated(e.target.value)}>
+            <option value="">None</option>
+            {taxCodes.data?.taxCodes.map((t) => <option key={t.Id} value={t.Id}>{t.Name}</option>)}
+          </select>
+        </Field>
+        <Field label="Exempt VAT code">
+          <select className="input" value={taxCodeIdExempt} onChange={(e) => setTaxExempt(e.target.value)}>
+            <option value="">None</option>
+            {taxCodes.data?.taxCodes.map((t) => <option key={t.Id} value={t.Id}>{t.Name}</option>)}
+          </select>
+        </Field>
+        <Field label="Cash rounding account" hint="Optional; needed when the till rounds cash totals.">
+          <select className="input" value={roundingAccountId} onChange={(e) => setRoundingAccount(e.target.value)}>
+            <option value="">None</option>
+            {income.map((a) => <option key={a.Id} value={a.Id}>{a.Name}</option>)}
           </select>
         </Field>
       </FormGrid>
+      <p className="muted" style={{ fontSize: 13 }}>Sales are posted as individual QuickBooks documents.</p>
 
       <p className="label" style={{ marginTop: 8 }}>Where each payment method is banked</p>
       <FormGrid columns={3}>
@@ -247,8 +264,11 @@ function MappingForm({ storeId, configured, onSaved }: { storeId: string; config
                   incomeAccountName: incomeName,
                   undepositedFundsAccountId,
                   taxCodeIdStandard: taxCodeIdStandard || null,
+                  taxCodeIdZeroRated: taxCodeIdZeroRated || null,
+                  taxCodeIdExempt: taxCodeIdExempt || null,
+                  roundingAccountId: roundingAccountId || null,
                   paymentAccounts: Object.fromEntries(Object.entries(paymentAccounts).filter(([, v]) => v)),
-                  postingMode,
+                  postingMode: 'PER_SALE',
                   autoSyncEnabled: true,
                 }),
               { success: 'Mapping saved', onDone: onSaved },

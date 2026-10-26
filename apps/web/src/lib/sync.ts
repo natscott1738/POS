@@ -1,6 +1,15 @@
 import type { SyncOperationResult } from '@pos/shared';
 import { api, ApiError } from './api.js';
-import { db, getMeta, setMeta, pendingCount, type CachedVariant } from './db.js';
+import {
+  db,
+  getMeta,
+  setMeta,
+  pendingCount,
+  claimQueuedOperations,
+  nextBatchSequence,
+  requestPersistentStorage,
+  type CachedVariant,
+} from './db.js';
 import { useNetwork, useAuth, toast } from './store.js';
 
 /**
@@ -14,6 +23,7 @@ import { useNetwork, useAuth, toast } from './store.js';
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
+const onOnline = () => void runSync();
 
 const PUSH_BATCH_SIZE = 100;
 const INTERVAL_MS = 20_000;
@@ -54,14 +64,18 @@ function deviceLabel(): string {
 
 export function startSync(): void {
   if (timer) return;
+  // If the browser grants it, protect the till's queue and cached catalogue
+  // from automatic storage eviction. This is best effort and never blocks sales.
+  void requestPersistentStorage();
   void runSync();
   timer = setInterval(() => void runSync(), INTERVAL_MS);
-  window.addEventListener('online', () => void runSync());
+  window.addEventListener('online', onOnline);
 }
 
 export function stopSync(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  window.removeEventListener('online', onOnline);
 }
 
 export async function runSync(): Promise<void> {
@@ -103,20 +117,15 @@ export async function runSync(): Promise<void> {
 }
 
 async function pushQueue(storeId: string, terminalId: string | null, deviceId: string): Promise<void> {
-  const queued = await db.queue
-    .where('status')
-    .anyOf('PENDING', 'FAILED')
-    .limit(PUSH_BATCH_SIZE)
-    .toArray();
+  if (!terminalId) return;
+  const queued = await claimQueuedOperations(PUSH_BATCH_SIZE);
 
   if (queued.length === 0) return;
-  if (!terminalId) return;
 
   // Chronological order so a void never arrives before the sale it voids.
   queued.sort((a, b) => a.createdAt - b.createdAt);
 
-  const batchSequence = (await getMeta<number>('batchSequence', 0)) + 1;
-  await db.queue.bulkPut(queued.map((op) => ({ ...op, status: 'SENDING' as const })));
+  const batchSequence = await nextBatchSequence();
 
   try {
     const response = await api.post<{ results: SyncOperationResult[] }>('/sync/push', {
@@ -154,6 +163,8 @@ async function pushQueue(storeId: string, terminalId: string | null, deviceId: s
           status: 'FAILED',
           attempts: (op?.attempts ?? 0) + 1,
           lastError: result.error?.message ?? 'rejected by server',
+          attemptStartedAt: undefined,
+          retryAt: undefined,
         });
         const clientSaleId = localSaleIdFor(queued, result.opId);
         const local = await db.sales.where('clientSaleId').equals(clientSaleId).first();
@@ -169,12 +180,17 @@ async function pushQueue(storeId: string, terminalId: string | null, deviceId: s
     if (err instanceof ApiError && err.status === 404) await setMeta('registeredDevice', null);
     // Put everything back so the batch is retried intact on the next cycle.
     await db.queue.bulkPut(
-      queued.map((op) => ({
-        ...op,
-        status: 'PENDING' as const,
-        attempts: op.attempts + 1,
-        lastError: err instanceof Error ? err.message : 'push failed',
-      })),
+      queued.map((op) => {
+        const attempts = op.attempts + 1;
+        return {
+          ...op,
+          status: 'PENDING' as const,
+          attempts,
+          lastError: err instanceof Error ? err.message : 'push failed',
+          attemptStartedAt: undefined,
+          retryAt: Date.now() + Math.min(300_000, 1_000 * 2 ** Math.min(attempts, 8)),
+        };
+      }),
     );
     throw err;
   }

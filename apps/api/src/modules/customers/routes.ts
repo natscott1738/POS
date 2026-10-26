@@ -3,7 +3,7 @@ import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { customerSchema, updateCustomerSchema, customerSearchQuery, loyaltyAdjustmentSchema, uuid } from '@pos/shared';
 import { db } from '../../db/client.js';
-import { customers, loyaltyTransactions, sales } from '../../db/schema/index.js';
+import { customers, loyaltyTransactions, sales, creditAccounts } from '../../db/schema/index.js';
 import { parseBody, parseParams, parseQuery } from '../../core/validation.js';
 import { requirePermissions, getAuth } from '../../auth/context.js';
 import { conflict, notFound } from '../../core/errors.js';
@@ -143,6 +143,10 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
       .where(eq(customers.id, id))
       .returning();
 
+    if (input.isActive === false) {
+      await db.update(creditAccounts).set({ isActive: false, updatedAt: new Date() }).where(eq(creditAccounts.customerId, id));
+    }
+
     await writeAudit(db, request, {
       action: 'CUSTOMER_UPDATED',
       entityType: 'CUSTOMER',
@@ -174,6 +178,7 @@ export async function customerRoutes(app: FastifyInstance): Promise<void> {
         marketingConsent: false,
       })
       .where(eq(customers.id, id));
+    await db.update(creditAccounts).set({ isActive: false, updatedAt: new Date() }).where(eq(creditAccounts.customerId, id));
 
     await writeAudit(db, request, {
       action: 'CUSTOMER_ERASED',

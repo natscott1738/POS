@@ -73,6 +73,34 @@ Persistent negative variance on one cashier is the signal worth watching. The
 Z-report (`GET /api/v1/reports/z-report?shiftId=…&format=pdf`) is the end-of-shift
 statement.
 
+## Customer credit
+
+Credit accounts are opened for a customer at a specific store. A manager sets the
+limit and payment terms under **Credit accounts**. Cashiers can view accounts,
+charge eligible sales to account, and record repayments; only managers can open
+accounts, change limits, deactivate accounts or post manual adjustments.
+
+- Account sales require a customer, an active account and a live server check.
+  The sale is refused if it would exceed the available limit.
+- Each account sale is a dated receivable. Repayments are allocated to the oldest
+  open invoice first. The activity view shows the original sale date, due date,
+  remaining invoice amount, repayment and running balance.
+- Record the bank transfer reference or M-PESA confirmation code when collecting
+  those tenders. Duplicate references are rejected. Cash collections require an
+  open shift so they appear in the drawer close.
+- Voiding an account sale reverses its receivable. If a payment or credit has
+  already been applied to that invoice, process a refund instead.
+- An account refund reduces the original receivable; if the invoice has already
+  been settled, the remaining amount becomes customer credit for later purchases.
+- Do not use a manual adjustment to record money received. Use **Record payment**
+  so the receipt, invoice allocation and shift reconciliation are preserved.
+
+Account sales enqueue a QuickBooks invoice using the account's due date.
+Repayments enqueue a QuickBooks customer payment linked to settled invoices.
+Prove account sales, partial repayments, multiple-invoice allocation, refunds and
+voids in the QuickBooks sandbox with the client's accountant before relying on
+that flow; see [docs/QUICKBOOKS.md](QUICKBOOKS.md).
+
 ## M-PESA
 
 ### Configuration
@@ -80,11 +108,12 @@ statement.
 ```
 MPESA_ENABLED=true
 MPESA_ENVIRONMENT=production
-MPESA_SHORTCODE=            # till or paybill number
-MPESA_PASSKEY=              # from the Daraja portal
+MPESA_SHORTCODE=            # BusinessShortCode used at Go-Live
+MPESA_PARTY_B=              # STK recipient; defaults to MPESA_SHORTCODE
+MPESA_PASSKEY=              # from Daraja for this shortcode/product
 MPESA_TRANSACTION_TYPE=CustomerBuyGoodsOnline   # till; PayBill for paybill
 MPESA_CALLBACK_TOKEN=       # openssl rand -hex 24
-MPESA_ALLOWED_IPS=196.201.214.200,196.201.214.206,…
+MPESA_ALLOWED_IPS=          # current callback ranges verified with Safaricom
 ```
 
 Register this callback URL with Safaricom:
@@ -201,10 +230,20 @@ Capped at one year per call.
 Tills cache the catalogue locally and queue sales. The status pill in the top bar
 shows connection state and queue depth.
 
-**What works offline:** scanning, pricing, discounts, cash payments, manual M-PESA
-code entry, printing.
+**What works offline:** scanning, cached pricing, discounts, cash payments and
+configured local printing.
 
-**What does not:** STK push, card payments, live stock levels, reports.
+**What does not:** M-PESA (including typing a confirmation code), card and credit
+payments, live stock levels, reports. Only cash tenders can be finalized offline.
+An already-added electronic tender cannot be completed after the server becomes
+unreachable; reconnect and confirm it with the provider first.
+
+The till requests persistent browser storage where supported. This is best effort:
+do not clear the browser profile or reinstall/reset the till until the queued count
+is zero. The offline session is valid for up to 14 days from the last successful
+online sign-in. Rejected queued operations stay in Settings for staff review and
+are not retried automatically. An operation stuck in `SENDING` is reclaimed after
+its two-minute lease expires.
 
 ### When a queued sale is rejected
 

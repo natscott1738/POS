@@ -12,6 +12,7 @@ export * from './schemas/inventory.js';
 export * from './schemas/sales.js';
 export * from './schemas/payments.js';
 export * from './schemas/customers.js';
+export * from './schemas/credit.js';
 export * from './schemas/sync.js';
 export * from './schemas/reports.js';
 export * from './schemas/quickbooks.js';

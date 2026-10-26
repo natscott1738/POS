@@ -19,6 +19,7 @@ import {
   changeLog,
   mpesaTransactions,
   pdqTransactions,
+  creditAccounts,
 } from '../../db/schema/index.js';
 import { applyStockMovement } from '../inventory/service.js';
 import { loadAuthoritativeVariants } from './pricing-guard.js';
@@ -26,6 +27,7 @@ import { nextReceiptNumber } from './receipt-number.js';
 import { badRequest, conflict, forbidden, notFound, unbalancedSale } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
 import { enqueueQbSync } from '../quickbooks/queue.js';
+import { postCreditCharge } from '../credit/service.js';
 
 /** Cents of drift tolerated between a till's total and the server's recomputation. */
 const REPRICE_TOLERANCE = 0;
@@ -149,6 +151,16 @@ export async function createSale(
   /* ------------------------------ Balance tenders ---------------------------- */
 
   const tenderTotal = sum(input.tenders.map((t) => t.amount));
+  const accountTenders = input.tenders.filter((t) => t.method === 'ON_ACCOUNT');
+  if (accountTenders.length > 1) throw badRequest('A sale can have only one account charge');
+  if (accountTenders.length > 0) {
+    const tender = accountTenders[0];
+    if (ctx.offline) throw badRequest('Credit sales need a live connection to check the account balance');
+    if (!ctx.permissions.has('credit:charge')) throw forbidden('You may not charge sales to customer accounts');
+    if (!input.customerId || tender?.customerId !== input.customerId) {
+      throw badRequest('Select the same customer on the sale and account tender');
+    }
+  }
   const cashTendered = sum(
     input.tenders.filter((t) => t.method === 'CASH').map((t) => (t as { tendered: number }).tendered),
   );
@@ -180,6 +192,7 @@ export async function createSale(
   /* ------------------------------ Loyalty redemption ------------------------- */
 
   let loyaltyPointsEarned = 0;
+  let creditAccountId: string | null = null;
   if (input.customerId) {
     const [customer] = await tx
       .select()
@@ -188,6 +201,15 @@ export async function createSale(
       .limit(1)
       .for('update');
     if (!customer) throw notFound('Customer');
+
+    if (accountTenders.length > 0) {
+      if (!customer.isActive || customer.deletedAt) throw conflict('Inactive customers cannot use account credit');
+      const [account] = await tx.select().from(creditAccounts)
+        .where(and(eq(creditAccounts.customerId, input.customerId), eq(creditAccounts.storeId, input.storeId)))
+        .limit(1).for('update');
+      if (!account || !account.isActive) throw conflict('This customer does not have an active credit account at this store');
+      creditAccountId = account.id;
+    }
 
     if (input.loyaltyPointsRedeemed > 0 && customer.loyaltyPoints < input.loyaltyPointsRedeemed) {
       throw conflict('Customer does not have enough loyalty points', {
@@ -329,6 +351,19 @@ export async function createSale(
         .set({ saleId: sale.id, reconciledAt: new Date() })
         .where(eq(pdqTransactions.id, tender.pdqTransactionId));
     }
+  }
+
+  if (creditAccountId) {
+    const creditTender = accountTenders[0];
+    if (!creditTender || creditTender.method !== 'ON_ACCOUNT') throw conflict('Account tender is missing');
+    await postCreditCharge(tx, {
+      accountId: creditAccountId,
+      storeId: input.storeId,
+      saleId: sale.id,
+      amount: creditTender.amount,
+      soldAt,
+      recordedBy: ctx.cashierId,
+    });
   }
 
   /* ---------------------------- Customer + loyalty ---------------------------- */

@@ -11,6 +11,7 @@ import {
   stockMovements,
   users,
   stores,
+  creditTransactions,
 } from '../../db/schema/index.js';
 
 type Scope = { from: Date; to: Date; storeIds: string[] | null; storeId?: string };
@@ -101,18 +102,56 @@ export async function paymentBreakdown(scope: Scope) {
         lte(sales.soldAt, scope.to),
         sql`${payments.status} <> 'REVERSED'`,
         sql`${sales.status} <> 'VOIDED'`,
+        sql`${payments.method} <> 'ON_ACCOUNT'`,
       ),
     )
     .groupBy(payments.method)
     .orderBy(desc(sql`SUM(${payments.amount})`));
 
-  const methods = rows.map((r) => ({
+  const methodMap = new Map(rows.map((r) => [r.method, {
     method: r.method,
     transactionCount: r.transactionCount,
     collected: Number(r.collected),
     refunded: Number(r.refunded),
     net: Number(r.total),
-  }));
+  }]));
+
+  const creditStoreFilter = scope.storeId
+    ? eq(creditTransactions.storeId, scope.storeId)
+    : scope.storeIds
+      ? inArray(creditTransactions.storeId, scope.storeIds)
+      : sql`true`;
+  const [creditSalesRow] = await db.select({
+    amount: sql<number>`COALESCE(SUM(${creditTransactions.amount}), 0)::bigint`.as('amount'),
+  }).from(creditTransactions).innerJoin(sales, eq(sales.id, creditTransactions.saleId)).where(and(
+    creditStoreFilter,
+    eq(creditTransactions.type, 'CHARGE'),
+    sql`${sales.status} <> 'VOIDED'`,
+    gte(creditTransactions.createdAt, scope.from),
+    lte(creditTransactions.createdAt, scope.to),
+  ));
+  const creditCollections = await db.select({
+    method: creditTransactions.paymentMethod,
+    transactionCount: sql<number>`COUNT(*)::int`.as('transactionCount'),
+    collected: sql<number>`COALESCE(SUM(-${creditTransactions.amount}), 0)::bigint`.as('collected'),
+  }).from(creditTransactions).where(and(
+    creditStoreFilter,
+    eq(creditTransactions.type, 'PAYMENT'),
+    gte(creditTransactions.createdAt, scope.from),
+    lte(creditTransactions.createdAt, scope.to),
+  )).groupBy(creditTransactions.paymentMethod);
+
+  for (const collection of creditCollections) {
+    if (!collection.method) continue;
+    const current = methodMap.get(collection.method) ?? {
+      method: collection.method, transactionCount: 0, collected: 0, refunded: 0, net: 0,
+    };
+    current.transactionCount += Number(collection.transactionCount);
+    current.collected += Number(collection.collected);
+    current.net += Number(collection.collected);
+    methodMap.set(collection.method, current);
+  }
+  const methods = [...methodMap.values()].sort((a, b) => b.net - a.net);
 
   const net = methods.reduce((a, m) => a + m.net, 0);
   return {
@@ -125,6 +164,8 @@ export async function paymentBreakdown(scope: Scope) {
       collected: methods.reduce((a, m) => a + m.collected, 0),
       refunded: methods.reduce((a, m) => a + m.refunded, 0),
       net,
+      creditSales: Number(creditSalesRow?.amount ?? 0),
+      creditCollections: creditCollections.reduce((total, row) => total + Number(row.collected), 0),
     },
   };
 }

@@ -68,7 +68,7 @@ apps/api/
   src/core/          Crypto, errors, audit, idempotency, validation
   src/auth/          Passwords, TOTP, token rotation, RBAC, manager override
   src/db/            Drizzle schema, migrations, seed
-  src/modules/       auth, catalog, inventory, customers, sales, payments,
+  src/modules/       auth, catalog, inventory, customers, credit, sales, payments,
                      quickbooks, reports, sync, admin, health
   src/jobs/          Encrypted backups, scheduler
 apps/web/
@@ -112,11 +112,14 @@ Two halves, and both matter:
    original receipt numbers and changes nothing.
 
 App updates are never applied mid-sale: a new version waits until the basket is
-empty and the person running the till agrees.
+empty, then applies automatically.
 
 Offline sales are accepted even when they take stock negative — the sale already
 happened, and refusing it would lose revenue — but they are flagged `oversold`
-for review.
+for review. Only cash can be finalized offline; electronic and customer-account
+tenders require a live server confirmation. The till asks the browser to preserve
+its local database where supported, but unsynced sales are still at risk if the
+browser profile is cleared or the device is lost.
 
 ### Payments
 
@@ -126,10 +129,16 @@ for review.
   A unique index on the confirmation code makes it impossible to settle two sales
   with one payment.
 - **PDQ** — pluggable provider interface. `ECR_HTTP` talks to a bridge on the
-  till's own loopback next to the card reader; `SIMULATOR` is for development.
-  Card data never reaches this system: only a masked PAN and an auth code are
-  stored. A terminal timeout is reported as *pending*, never as declined, because
-  the card may well have been charged.
+  API host's configured endpoint; `SIMULATOR` is for development. The API host
+  must be able to reach the bridge, so cloud hosting cannot use the till's
+  `127.0.0.1` address. Card data never reaches this system: only a masked PAN
+  and an auth code are stored. A terminal timeout is reported as *pending*, but
+  checkout currently needs a final synchronous result to complete the sale.
+- **Customer credit** — per-store accounts have a credit limit and payment
+  terms. Account sales create dated receivables; repayments apply to the oldest
+  open invoice first. The append-only ledger records charges, repayments,
+  adjustments, refunds and void reversals. Cash collections count toward the
+  active shift's expected drawer balance.
 
 ### QuickBooks
 
@@ -189,6 +198,7 @@ deliberately outside the authenticated surface.
 | Sales | `sales`, `sales/:id`, `sales/:id/void`, `sales/refunds`, `sales/by-receipt/:n` |
 | Shifts | `shifts/open`, `shifts/current`, `shifts/:id/close` |
 | Payments | `payments/mpesa/*`, `payments/pdq/*` |
+| Credit | `credit/eligibility`, `credit/accounts*`, `credit/accounts/:id/payments`, `credit/accounts/:id/adjustments` |
 | Reports | `reports/sales-summary`, `payments`, `tax`, `stock`, `cashiers`, `z-report` |
 | QuickBooks | `quickbooks/connect`, `callback`, `status`, `mapping`, `queue`, `sync` |
 | Sync | `sync/push`, `sync/pull`, `sync/bootstrap`, `sync/devices`, `sync/time` |
@@ -200,8 +210,8 @@ Reports accept `format=json|csv|pdf`. Export is a separate permission from viewi
 ## Testing
 
 ```bash
-make test        # 65 unit + integration tests against a real PostgreSQL
-make e2e         # 9 browser tests, including offline with the network cut
+make test        # 83 unit + integration tests against a real PostgreSQL
+make e2e         # 15 browser tests, including offline with the network cut
 ```
 
 Integration tests create and drop their own database per run, so they can run in
@@ -235,5 +245,8 @@ refresh cookie keeps working. When the API moves, change the rewrite destination
 and add the Vercel production URL to the API's `CORS_ORIGINS`: the proxy forwards
 the browser's `Origin`, which the API checks.
 
-See [docs/SECURITY.md](docs/SECURITY.md) for the threat model and control detail,
-and [docs/OPERATIONS.md](docs/OPERATIONS.md) for day-to-day running.
+See [docs/SECURITY.md](docs/SECURITY.md) for the threat model,
+[docs/OPERATIONS.md](docs/OPERATIONS.md) for day-to-day running,
+[docs/CLIENT_INTEGRATION_RUNBOOK.md](docs/CLIENT_INTEGRATION_RUNBOOK.md) for
+step-by-step provider and client-machine setup, and
+[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) for the go-live worklist.

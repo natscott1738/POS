@@ -19,7 +19,7 @@ import { createSale } from '../sales/service.js';
 import { createRefund, voidSale } from '../sales/refunds.js';
 import { applyStockMovement } from '../inventory/service.js';
 import { AppError } from '../../core/errors.js';
-import { forbidden, notFound } from '../../core/errors.js';
+import { conflict, forbidden, idempotencyMismatch, notFound } from '../../core/errors.js';
 import { stableStringify } from '../../core/idempotency.js';
 import { sha256Hex } from '../../core/crypto.js';
 import type { AuthContext } from '../../auth/context.js';
@@ -180,6 +180,35 @@ async function dispatch(
 ): Promise<SyncOperationResult> {
   switch (operation.type) {
     case 'SALE_CREATE': {
+      // An online POST /sales can commit while its response is lost. Its
+      // fallback outbox replay must reuse that completed idempotency result
+      // instead of hitting the sales_client_id unique constraint and showing a
+      // paid sale as rejected on the till.
+      const [directAttempt] = await tx
+        .select()
+        .from(idempotencyKeys)
+        .where(and(
+          eq(idempotencyKeys.scope, 'sale:create'),
+          eq(idempotencyKeys.key, operation.payload.clientSaleId),
+        ))
+        .limit(1)
+        .for('update');
+
+      if (directAttempt) {
+        const hash = sha256Hex(stableStringify(operation.payload));
+        if (directAttempt.requestHash !== hash) throw idempotencyMismatch();
+        if (directAttempt.status !== 'COMPLETED') {
+          throw conflict('The matching sale is still being processed; sync it again shortly');
+        }
+        const result = directAttempt.responseBody as { receiptNumber?: string } | null;
+        return {
+          opId: operation.opId,
+          status: 'DUPLICATE',
+          serverId: directAttempt.resourceId,
+          receiptNumber: result?.receiptNumber ?? null,
+        };
+      }
+
       const result = await createSale(tx, operation.payload, {
         request,
         cashierId: auth.userId,

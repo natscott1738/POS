@@ -12,7 +12,7 @@ import {
   uuid,
 } from '@pos/shared';
 import { db } from '../../db/client.js';
-import { sales, saleLines, payments, refunds, refundLines, shifts, stores, customers, users } from '../../db/schema/index.js';
+import { sales, saleLines, payments, refunds, refundLines, shifts, stores, customers, users, creditTransactions } from '../../db/schema/index.js';
 import { parseBody, parseParams, parseQuery } from '../../core/validation.js';
 import { requirePermissions, getAuth, assertStoreAccess, visibleStoreIds } from '../../auth/context.js';
 import { requirePermissionOrOverride } from '../../auth/override.js';
@@ -327,6 +327,16 @@ export async function shiftSummary(shiftId: string) {
     .where(and(eq(sales.shiftId, shiftId), sql`${payments.status} <> 'REVERSED'`))
     .groupBy(payments.method);
 
+  const creditCash = await db.select({
+    total: sql<number>`COALESCE(SUM(-${creditTransactions.amount}), 0)::bigint`.as('total'),
+    count: sql<number>`COUNT(*)::int`.as('count'),
+  }).from(creditTransactions)
+    .where(and(
+      eq(creditTransactions.shiftId, shiftId),
+      eq(creditTransactions.type, 'PAYMENT'),
+      eq(creditTransactions.paymentMethod, 'CASH'),
+    ));
+
   const [totals] = await db
     .select({
       saleCount: sql<number>`COUNT(*) FILTER (WHERE ${sales.status} <> 'VOIDED')::int`.as('saleCount'),
@@ -345,6 +355,15 @@ export async function shiftSummary(shiftId: string) {
     total: Number(row.total),
     count: row.count,
   }));
+  const cashTender = tenders.find((tender) => tender.method === 'CASH');
+  if (Number(creditCash[0]?.count ?? 0) > 0) {
+    if (cashTender) {
+      cashTender.total += Number(creditCash[0]?.total ?? 0);
+      cashTender.count += Number(creditCash[0]?.count ?? 0);
+    } else {
+      tenders.push({ method: 'CASH', total: Number(creditCash[0]?.total ?? 0), count: Number(creditCash[0]?.count ?? 0) });
+    }
+  }
 
   return {
     tenders,

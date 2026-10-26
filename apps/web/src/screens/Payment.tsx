@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react';
 import { formatCents, changeDue, type CreateSaleInput, type TenderInput } from '@pos/shared';
 import { useCart } from '../lib/cart.js';
 import { api, ApiError } from '../lib/api.js';
-import { enqueue, db, getMeta } from '../lib/db.js';
+import { enqueueSale, db, getMeta } from '../lib/db.js';
 import { useAuth, useNetwork, toast } from '../lib/store.js';
+import { useApi } from '../lib/useApi.js';
 import { runSync } from '../lib/sync.js';
 import { printReceipt, loadPrinterConfig } from '../lib/printer.js';
 import type { ReceiptData } from '@pos/shared';
 import { Modal } from '../components/Modal.js';
 import { Field } from '../components/ui.js';
 
-type Method = 'CASH' | 'MPESA' | 'PDQ';
+type Method = 'CASH' | 'MPESA' | 'PDQ' | 'ON_ACCOUNT';
 
 export function PaymentPanel({
   storeId,
@@ -26,12 +27,44 @@ export function PaymentPanel({
   const cart = useCart();
   const online = useNetwork((s) => s.serverReachable);
   const shiftId = useAuth((s) => s.shiftId);
+  const canChargeAccount = useAuth((s) => s.can('credit:charge'));
   const [method, setMethod] = useState<Method>('CASH');
   const [submitting, setSubmitting] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerMatches, setCustomerMatches] = useState<Array<{ id: string; fullName: string; phone: string | null }>>([]);
 
   const totals = cart.totals();
   const outstanding = cart.balance();
   const settled = outstanding <= 0;
+  const eligibilityPath = online && cart.customerId
+    ? `/credit/eligibility?customerId=${cart.customerId}&storeId=${storeId}`
+    : null;
+  const eligibility = useApi<{ account: { isActive: boolean; creditLimit: number; balance: number } | null; available: number }>(
+    eligibilityPath,
+    [eligibilityPath],
+  );
+
+  useEffect(() => {
+    const query = customerSearch.trim();
+    if (query.length < 2) {
+      setCustomerMatches([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void api.get<{ customers: Array<{ id: string; fullName: string; phone: string | null }> }>(
+        `/customers?limit=10&q=${encodeURIComponent(query)}`,
+      ).then((result) => { if (!cancelled) setCustomerMatches(result.customers); })
+        .catch(() => { if (!cancelled) setCustomerMatches([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [customerSearch]);
+
+  useEffect(() => {
+    // A tender that needs a server confirmation cannot safely be finalized
+    // after connectivity drops. Keep offline checkout on cash only.
+    if (!online && method !== 'CASH') setMethod('CASH');
+  }, [online, method]);
 
   /** Change is only ever produced by over-tendered cash. */
   function changeFromCash(): number {
@@ -44,6 +77,10 @@ export function PaymentPanel({
   async function completeSale(): Promise<void> {
     if (!settled) {
       toast.error('The basket is not fully paid');
+      return;
+    }
+    if (!online && cart.tenders.some((tender) => tender.method !== 'CASH')) {
+      toast.error('Only cash tenders can be finalized offline. Reconnect to confirm electronic or account payments.');
       return;
     }
     setSubmitting(true);
@@ -75,19 +112,28 @@ export function PaymentPanel({
       loyaltyPointsRedeemed: cart.loyaltyPointsRedeemed,
     };
 
-    // Always record locally first. If the network call then fails, the sale is
-    // already safe and the queue will deliver it.
-    await db.sales.put({
+    const localSale = {
       clientSaleId,
       receiptNumber: null,
       total: totals.total,
       status: 'QUEUED',
       soldAt,
       payload,
-    });
+    } as const;
+    const operation = { opId: clientSaleId, type: 'SALE_CREATE' as const, occurredAt: soldAt, payload };
+
+    // A physical cash sale is not considered complete until the sale and its
+    // upload operation are committed together in IndexedDB.
+    try {
+      if (online) await db.sales.put(localSale);
+      else await enqueueSale(localSale, operation);
+    } catch {
+      toast.error('This till could not save the sale locally. Stop checkout and ask a manager to check this device before taking payment.');
+      setSubmitting(false);
+      return;
+    }
 
     if (!online) {
-      await enqueue({ opId: crypto.randomUUID(), type: 'SALE_CREATE', occurredAt: soldAt, payload });
       toast.success(`Sale saved offline · ${formatCents(totals.total)}`);
       // Offline sales have no server receipt number yet; print with the local id.
       await printSaleReceipt(`OFFLINE-${clientSaleId.slice(0, 8).toUpperCase()}`, changeFromCash());
@@ -121,7 +167,13 @@ export function PaymentPanel({
       // A network failure is recoverable: queue it. A rejection is not: the
       // cashier must see why, because the totals or stock were refused.
       if (err instanceof ApiError && err.code === 'NETWORK') {
-        await enqueue({ opId: crypto.randomUUID(), type: 'SALE_CREATE', occurredAt: soldAt, payload });
+        try {
+          await enqueueSale(localSale, operation);
+        } catch {
+          toast.error('The server connection dropped and this till could not queue the sale. Keep this screen open, do not take payment again, and contact a manager to reconcile it.');
+          setSubmitting(false);
+          return;
+        }
         toast.warning('Server unreachable — the sale is queued and will sync.');
         finish();
       } else {
@@ -188,6 +240,27 @@ export function PaymentPanel({
 
   return (
     <Modal title="Payment" onClose={onClose} wide>
+      <Field label="Customer for this sale">
+        {cart.customerId ? (
+          <div className="row">
+            <div className="input" style={{ flex: 1, display: 'flex', alignItems: 'center' }}>{cart.customerName}</div>
+            {!cart.tenders.some((tender) => tender.method === 'ON_ACCOUNT') && (
+              <button className="btn ghost" onClick={() => { cart.setCustomer(null, null); setCustomerSearch(''); }}>Clear</button>
+            )}
+          </div>
+        ) : (
+          <input className="input" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Search name, phone or email" autoComplete="off" />
+        )}
+      </Field>
+      {customerMatches.length > 0 && !cart.customerId && (
+        <div className="card" style={{ padding: 0, maxHeight: 160, overflow: 'auto', marginTop: -8, marginBottom: 12 }}>
+          {customerMatches.map((customer) => (
+            <button key={customer.id} className="btn ghost block" style={{ textAlign: 'left', borderRadius: 0 }} onClick={() => { cart.setCustomer(customer.id, customer.fullName); setCustomerMatches([]); setCustomerSearch(''); }}>
+              {customer.fullName}<span className="muted" style={{ marginLeft: 8 }}>{customer.phone ?? ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="row" style={{ marginBottom: 14 }}>
         <div>
           <div className="muted" style={{ fontSize: 12 }}>TOTAL</div>
@@ -221,13 +294,33 @@ export function PaymentPanel({
         <>
           <div className="tabs">
             <button className={method === 'CASH' ? 'active' : ''} onClick={() => setMethod('CASH')}>Cash</button>
-            <button className={method === 'MPESA' ? 'active' : ''} onClick={() => setMethod('MPESA')}>M-PESA</button>
-            <button className={method === 'PDQ' ? 'active' : ''} onClick={() => setMethod('PDQ')}>Card</button>
+            <button className={method === 'MPESA' ? 'active' : ''} disabled={!online} onClick={() => setMethod('MPESA')}>M-PESA</button>
+            <button className={method === 'PDQ' ? 'active' : ''} disabled={!online} onClick={() => setMethod('PDQ')}>Card</button>
+            {canChargeAccount && online && <button className={method === 'ON_ACCOUNT' ? 'active' : ''} onClick={() => setMethod('ON_ACCOUNT')}>Customer account</button>}
           </div>
+
+          {!online && <div className="banner warning">Offline checkout accepts cash only. Electronic and customer account payments need a live server confirmation.</div>}
 
           {method === 'CASH' && <CashTender outstanding={outstanding} />}
           {method === 'MPESA' && <MpesaTender outstanding={outstanding} storeId={storeId} terminalId={terminalId} />}
           {method === 'PDQ' && <CardTender outstanding={outstanding} storeId={storeId} terminalId={terminalId} />}
+          {method === 'ON_ACCOUNT' && (
+            <div>
+              {!cart.customerId ? (
+                <div className="banner warning">Find and select a customer above to check their account.</div>
+              ) : !eligibility.data?.account || !eligibility.data.account.isActive ? (
+                <div className="banner warning">This customer has no active credit account at this store. Ask a manager to open one under Credit accounts.</div>
+              ) : (
+                <>
+                  <p className="muted">Available credit: <strong>{formatCents(eligibility.data.available)}</strong> · Account balance: <strong>{formatCents(eligibility.data.account.balance)}</strong></p>
+                  <button className="btn primary block" disabled={eligibility.loading || outstanding <= 0 || outstanding > eligibility.data.available} onClick={() => cart.addTender({ method: 'ON_ACCOUNT', amount: outstanding, customerId: cart.customerId! })}>
+                    Charge remaining {formatCents(outstanding)} to account
+                  </button>
+                  {outstanding > eligibility.data.available && <p className="muted" style={{ color: 'var(--danger)', fontSize: 12 }}>The remaining amount is above the available credit. Add another payment method or ask a manager to review the limit.</p>}
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
 

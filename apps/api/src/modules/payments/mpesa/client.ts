@@ -101,7 +101,7 @@ export async function stkPush(params: {
         TransactionType: env.MPESA_TRANSACTION_TYPE,
         Amount: amount,
         PartyA: params.phone,
-        PartyB: env.MPESA_SHORTCODE,
+        PartyB: env.MPESA_PARTY_B ?? env.MPESA_SHORTCODE,
         PhoneNumber: params.phone,
         CallBackURL: params.callbackUrl,
         AccountReference: params.accountReference.slice(0, 12),

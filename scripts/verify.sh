@@ -134,17 +134,17 @@ fi
 "$PG_BIN/psql" -h 127.0.0.1 -p "$PGPORT" -U pos -d pos \
   -c "UPDATE shifts SET status='CLOSED', closed_at=now() WHERE status='OPEN'" >/dev/null 2>&1
 
-npx tsx apps/api/src/index.ts >"$LOGDIR/api.log" 2>&1 &
+PORT="$API_PORT" npx tsx apps/api/src/index.ts >"$LOGDIR/api.log" 2>&1 &
 STARTED_API=1
 wait_for "http://127.0.0.1:$API_PORT/health" "API" && pass "API on :$API_PORT"
 
-(cd apps/web && npx vite preview --host 127.0.0.1 --port "$WEB_PORT" --strictPort >"$LOGDIR/web.log" 2>&1) &
+(cd apps/web && VITE_API_TARGET="http://127.0.0.1:$API_PORT" npx vite preview --host 127.0.0.1 --port "$WEB_PORT" --strictPort >"$LOGDIR/web.log" 2>&1) &
 STARTED_WEB=1
 wait_for "http://127.0.0.1:$WEB_PORT/" "Till" && pass "till on :$WEB_PORT"
 
 step "Browser and offline tests"
 note "runs against the production build, with the network genuinely cut"
-if npx playwright test --config apps/web/playwright.config.ts >"$LOGDIR/e2e.log" 2>&1; then
+if E2E_BASE_URL="http://127.0.0.1:$WEB_PORT" npx playwright test --config apps/web/playwright.config.ts >"$LOGDIR/e2e.log" 2>&1; then
   grep -E '✓' "$LOGDIR/e2e.log" | sed 's/^ *//' | while read -r line; do
     printf '  %s✓%s %s\n' "$GREEN" "$OFF" "$(echo "$line" | sed 's/^✓ *[0-9]* *//; s/apps\/web\/e2e\///')"
   done

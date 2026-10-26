@@ -14,6 +14,7 @@ import { quickbooksRoutes } from './modules/quickbooks/routes.js';
 import { syncRoutes } from './modules/sync/routes.js';
 import { adminRoutes } from './modules/admin/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
+import { creditRoutes } from './modules/credit/routes.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -86,6 +87,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await api.register(catalogRoutes, { prefix: '/catalog' });
       await api.register(inventoryRoutes, { prefix: '/inventory' });
       await api.register(customerRoutes, { prefix: '/customers' });
+      await api.register(creditRoutes, { prefix: '/credit' });
       await api.register(salesRoutes, { prefix: '/sales' });
       await api.register(shiftRoutes, { prefix: '/shifts' });
       await api.register(paymentRoutes, { prefix: '/payments' });

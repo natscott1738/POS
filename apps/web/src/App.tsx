@@ -17,6 +17,7 @@ import Reports from './screens/Reports.js';
 import QuickBooks from './screens/QuickBooks.js';
 import Admin from './screens/Admin.js';
 import Settings from './screens/Settings.js';
+import Credit from './screens/Credit.js';
 
 export default function App() {
   const { user, ready, restore, signOut, can } = useAuth();
@@ -93,6 +94,7 @@ export default function App() {
             <Route path="/products" element={can('product:read') ? <Products /> : <Navigate to="/" replace />} />
             <Route path="/inventory" element={can('inventory:read') ? <Inventory /> : <Navigate to="/" replace />} />
             <Route path="/customers" element={can('customer:read') ? <Customers /> : <Navigate to="/" replace />} />
+            <Route path="/credit" element={can('credit:read') ? <Credit /> : <Navigate to="/" replace />} />
             <Route path="/reports" element={can('report:sales') ? <Reports /> : <Navigate to="/" replace />} />
             <Route path="/quickbooks" element={can('quickbooks:sync') ? <QuickBooks /> : <Navigate to="/" replace />} />
             <Route
@@ -138,6 +140,7 @@ function Sidebar({
     can('product:read') && { to: '/products', label: 'Products' },
     can('inventory:read') && { to: '/inventory', label: 'Stock' },
     can('customer:read') && { to: '/customers', label: 'Customers' },
+    can('credit:read') && { to: '/credit', label: 'Credit accounts' },
     can('report:sales') && { to: '/reports', label: 'Reports' },
   ].filter(Boolean) as Array<{ to: string; label: string }>;
 

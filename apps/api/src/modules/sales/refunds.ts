@@ -11,12 +11,16 @@ import {
   customers,
   loyaltyTransactions,
   changeLog,
+  creditAccounts,
+  creditTransactions,
+  creditAllocations,
 } from '../../db/schema/index.js';
 import { applyStockMovement } from '../inventory/service.js';
 import { nextReceiptNumber } from './receipt-number.js';
 import { badRequest, conflict, notFound } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
 import { enqueueQbSync } from '../quickbooks/queue.js';
+import { postCreditNote } from '../credit/service.js';
 
 export interface RefundContext {
   request: FastifyRequest;
@@ -202,6 +206,28 @@ export async function createRefund(
     });
   }
 
+  const accountRefund = sum(input.refundTenders.filter((t) => t.method === 'ON_ACCOUNT').map((t) => t.amount));
+  if (accountRefund > 0) {
+    if (!sale.customerId) throw conflict('An account refund requires a customer on the original sale');
+    const [account] = await tx.select().from(creditAccounts)
+      .where(and(eq(creditAccounts.customerId, sale.customerId), eq(creditAccounts.storeId, sale.storeId)))
+      .limit(1).for('update');
+    if (!account) throw conflict('The original sale has no credit account to refund to');
+    const [charge] = await tx.select({ id: creditTransactions.id }).from(creditTransactions)
+      .where(and(eq(creditTransactions.saleId, sale.id), eq(creditTransactions.type, 'CHARGE'))).limit(1);
+    if (!charge) throw conflict('The original sale has no credit invoice to refund to');
+    await postCreditNote(tx, {
+      accountId: account.id,
+      storeId: sale.storeId,
+      saleId: sale.id,
+      type: 'REFUND',
+      amount: -accountRefund,
+      targetChargeId: charge.id,
+      note: `Refund ${refundNumber}`,
+      recordedBy: ctx.processedBy,
+    });
+  }
+
   const totalRefunded = sale.amountRefunded + total;
   const newStatus = totalRefunded >= sale.total ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
   await tx
@@ -277,6 +303,29 @@ export async function voidSale(
   if (!sale) throw notFound('Sale');
   if (sale.status === 'VOIDED') throw conflict('That sale is already voided');
   if (sale.amountRefunded > 0) throw conflict('Refund the sale instead; it has already been partly refunded');
+
+  const [creditCharge] = await tx.select().from(creditTransactions)
+    .where(and(eq(creditTransactions.saleId, sale.id), eq(creditTransactions.type, 'CHARGE')))
+    .limit(1).for('update');
+  if (creditCharge) {
+    const [allocation] = await tx.select({ amount: sql<number>`COALESCE(SUM(${creditAllocations.amount}), 0)::bigint`.as('amount') })
+      .from(creditAllocations).where(eq(creditAllocations.chargeTransactionId, creditCharge.id));
+    if (Number(allocation?.amount ?? 0) > 0) {
+      throw conflict('This account sale has credit applied; process a refund instead of voiding it');
+    }
+    const [account] = await tx.select().from(creditAccounts).where(eq(creditAccounts.id, creditCharge.accountId)).limit(1).for('update');
+    if (!account) throw conflict('The credit account for this sale no longer exists');
+    await postCreditNote(tx, {
+      accountId: account.id,
+      storeId: sale.storeId,
+      saleId: sale.id,
+      type: 'VOID_REVERSAL',
+      amount: -creditCharge.amount,
+      targetChargeId: creditCharge.id,
+      note: `Void of ${sale.receiptNumber}: ${reason}`,
+      recordedBy: ctx.processedBy,
+    });
+  }
 
   // Same-day only: voiding an older sale would silently restate a closed period.
   const ageHours = (Date.now() - sale.soldAt.getTime()) / 3_600_000;

@@ -39,6 +39,12 @@ export const PERMISSIONS = [
   'customer:delete',
   'loyalty:adjust',
 
+  // Accounts receivable
+  'credit:read',
+  'credit:charge',
+  'credit:collect',
+  'credit:manage',
+
   // Payments
   'payment:mpesa:initiate',
   'payment:mpesa:reconcile',
@@ -91,6 +97,9 @@ const CASHIER: Permission[] = [
   'inventory:read',
   'customer:read',
   'customer:write',
+  'credit:read',
+  'credit:charge',
+  'credit:collect',
   'payment:mpesa:initiate',
   'payment:pdq:initiate',
 ];
@@ -109,6 +118,8 @@ const MANAGER: Permission[] = [
   'inventory:count',
   'inventory:transfer',
   'customer:delete',
+  'credit:read',
+  'credit:manage',
   'loyalty:adjust',
   'payment:mpesa:reconcile',
   'payment:pdq:reconcile',
@@ -129,6 +140,7 @@ const AUDITOR: Permission[] = [
   'product:read',
   'inventory:read',
   'customer:read',
+  'credit:read',
   'shift:read:all',
   'report:sales',
   'report:inventory',

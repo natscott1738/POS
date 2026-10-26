@@ -32,10 +32,14 @@ export interface QueuedOperation {
   type: SyncOperation['type'];
   occurredAt: string;
   payload: unknown;
-  /** PENDING -> SENDING -> (removed) | FAILED */
+  /** PENDING -> SENDING -> (removed) | FAILED (rejected for staff review). */
   status: 'PENDING' | 'SENDING' | 'FAILED';
   attempts: number;
   lastError?: string;
+  /** Lease timestamp so a different tab can reclaim work after a crash. */
+  attemptStartedAt?: number;
+  /** Backoff after a transport/server failure. */
+  retryAt?: number;
   createdAt: number;
 }
 
@@ -145,8 +149,69 @@ export async function enqueue(operation: Omit<QueuedOperation, 'status' | 'attem
   await db.queue.put({ ...operation, status: 'PENDING', attempts: 0, createdAt: Date.now() });
 }
 
+/**
+ * A completed offline sale and the operation that will upload it must commit
+ * together. Otherwise a full browser database can leave a sale in local history
+ * with no upload record, or an upload record with no local receipt.
+ */
+export async function enqueueSale(
+  sale: LocalSale,
+  operation: Omit<QueuedOperation, 'status' | 'attempts' | 'createdAt'>,
+): Promise<void> {
+  await db.transaction('rw', db.sales, db.queue, async () => {
+    await db.sales.put(sale);
+    await db.queue.put({ ...operation, status: 'PENDING', attempts: 0, createdAt: Date.now() });
+  });
+}
+
+const SENDING_LEASE_MS = 2 * 60 * 1000;
+
+/**
+ * Claims queue entries in one IndexedDB write transaction. The transaction is
+ * serialized across tabs, so only one tab sends an operation at a time. A
+ * SENDING lease expires after two minutes to recover a tab/browser crash.
+ */
+export async function claimQueuedOperations(limit: number, now = Date.now()): Promise<QueuedOperation[]> {
+  return db.transaction('rw', db.queue, async () => {
+    const [pending, sending] = await Promise.all([
+      db.queue.where('status').equals('PENDING').toArray(),
+      db.queue.where('status').equals('SENDING').toArray(),
+    ]);
+    const eligible = [...pending, ...sending]
+      .filter((op) => op.status === 'PENDING'
+        ? (op.retryAt ?? 0) <= now
+        : now - (op.attemptStartedAt ?? op.createdAt) >= SENDING_LEASE_MS)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(0, limit);
+
+    const claimed = eligible.map((op) => ({ ...op, status: 'SENDING' as const, attemptStartedAt: now }));
+    await db.queue.bulkPut(claimed);
+    return claimed;
+  });
+}
+
+/** Allocates an increasing batch number safely even if two tabs sync at once. */
+export async function nextBatchSequence(): Promise<number> {
+  return db.transaction('rw', db.meta, async () => {
+    const row = await db.meta.get('batchSequence');
+    const next = Number(row?.value ?? 0) + 1;
+    await db.meta.put({ key: 'batchSequence', value: next });
+    return next;
+  });
+}
+
 export async function pendingCount(): Promise<number> {
-  return db.queue.where('status').anyOf('PENDING', 'FAILED').count();
+  return db.queue.where('status').anyOf('PENDING', 'SENDING', 'FAILED').count();
+}
+
+/** Best effort; protects IndexedDB queue/catalogue from automatic eviction. */
+export async function requestPersistentStorage(): Promise<boolean | null> {
+  if (!navigator.storage?.persist) return null;
+  try {
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
 }
 
 /**

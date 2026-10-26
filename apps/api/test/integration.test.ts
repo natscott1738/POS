@@ -363,6 +363,82 @@ describe('sales', () => {
   });
 });
 
+describe('card payment simulator', () => {
+  it('approves normal test amounts and deterministically declines amounts ending in .13', async () => {
+    const { db } = await import('../src/db/client.js');
+    const { pdqTerminals, pdqTransactions } = await import('../src/db/schema/index.js');
+    const [pdqTerminal] = await db
+      .insert(pdqTerminals)
+      .values({ storeId, terminalId, label: 'Simulated test card machine', provider: 'SIMULATOR' })
+      .returning();
+
+    const approved = await app.inject({
+      method: 'POST',
+      url: '/api/v1/payments/pdq/sale',
+      headers: auth(adminToken),
+      payload: {
+        storeId,
+        terminalId,
+        pdqTerminalId: pdqTerminal!.id,
+        amount: 12_000,
+        reference: 'SIM-APPROVED',
+      },
+    });
+
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json()).toMatchObject({
+      status: 'AUTHORIZED',
+      approved: true,
+      pending: false,
+      maskedPan: '400000******1234',
+      cardScheme: 'VISA',
+    });
+    expect(approved.json().authCode).toMatch(/^[A-F0-9]{6}$/);
+    const approvedRecord = await db.query.pdqTransactions.findFirst({
+      where: (table, { eq }) => eq(table.id, approved.json().transactionId),
+    });
+    expect(approvedRecord).toMatchObject({ status: 'AUTHORIZED', responseCode: '00' });
+
+    const declined = await app.inject({
+      method: 'POST',
+      url: '/api/v1/payments/pdq/sale',
+      headers: auth(adminToken),
+      payload: {
+        storeId,
+        terminalId,
+        pdqTerminalId: pdqTerminal!.id,
+        amount: 1_213,
+        reference: 'SIM-DECLINED',
+      },
+    });
+
+    expect(declined.statusCode).toBe(200);
+    expect(declined.json()).toMatchObject({
+      status: 'FAILED',
+      approved: false,
+      pending: false,
+      message: 'Insufficient funds',
+    });
+    const declinedRecord = await db.query.pdqTransactions.findFirst({
+      where: (table, { eq }) => eq(table.id, declined.json().transactionId),
+    });
+    expect(declinedRecord).toMatchObject({ status: 'FAILED', responseCode: '51' });
+
+    const reversal = await app.inject({
+      method: 'POST',
+      url: '/api/v1/payments/pdq/reverse',
+      headers: auth(adminToken),
+      payload: { pdqTransactionId: approved.json().transactionId, reason: 'simulator test cleanup' },
+    });
+    expect(reversal.statusCode).toBe(200);
+    expect(reversal.json()).toEqual({ reversed: true });
+    const reversedRecord = await db.query.pdqTransactions.findFirst({
+      where: (table, { eq }) => eq(table.id, approved.json().transactionId),
+    });
+    expect(reversedRecord?.status).toBe('REVERSED');
+  });
+});
+
 describe('concurrency', () => {
   it('does not oversell the last unit when two tills race', async () => {
     // Exactly one unit on hand, set through the ledger.
@@ -521,6 +597,39 @@ describe('offline sync', () => {
     // Re-push the whole batch, as a till would after a dropped connection.
     const replay = await app.inject({ method: 'POST', url: '/api/v1/sync/push', headers: auth(adminToken), payload: batch });
     expect(replay.statusCode).toBe(200);
+    expect(await stockOnHand()).toBe(before - 1000);
+  });
+
+  it('replays an online sale safely when its response was lost before queueing', async () => {
+    await setStock(50_000);
+    const payload = salePayload();
+    const before = await stockOnHand();
+    const direct = await app.inject({
+      method: 'POST', url: '/api/v1/sales', headers: auth(adminToken), payload,
+    });
+    expect(direct.statusCode).toBe(201);
+    expect(await stockOnHand()).toBe(before - 1000);
+
+    // The browser falls back to the offline outbox after a transport timeout.
+    // That replay must resolve the original direct-sale idempotency record.
+    const replay = await app.inject({
+      method: 'POST', url: '/api/v1/sync/push', headers: auth(adminToken),
+      payload: {
+        deviceId,
+        storeId,
+        terminalId,
+        batchSequence: 4,
+        operations: [{
+          type: 'SALE_CREATE',
+          opId: payload.clientSaleId,
+          occurredAt: payload.soldAt,
+          payload,
+        }],
+      },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().results[0].status).toBe('DUPLICATE');
+    expect(replay.json().results[0].receiptNumber).toBe(direct.json().receiptNumber);
     expect(await stockOnHand()).toBe(before - 1000);
   });
 
@@ -781,6 +890,193 @@ describe('shifts', () => {
       payload: { storeId, terminalId, openingFloat: 0 },
     });
     expect(second.statusCode).toBe(409);
+  });
+});
+
+describe('customer credit', () => {
+  async function createCreditAccount(creditLimit = 200_000): Promise<{ customerId: string; accountId: string }> {
+    const phone = `2547${String(Math.floor(Math.random() * 100_000_000)).padStart(8, '0')}`;
+    const customer = await app.inject({
+      method: 'POST', url: '/api/v1/customers', headers: auth(adminToken),
+      payload: { fullName: `Credit Test ${randomUUID().slice(0, 8)}`, phone, marketingConsent: false },
+    });
+    expect(customer.statusCode).toBe(201);
+    const customerId = customer.json().customer.id as string;
+    const account = await app.inject({
+      method: 'POST', url: '/api/v1/credit/accounts', headers: auth(adminToken),
+      payload: { customerId, storeId, creditLimit, termsDays: 14 },
+    });
+    expect(account.statusCode).toBe(201);
+    return { customerId, accountId: account.json().account.id as string };
+  }
+
+  it('records dated account sales, enforces the limit, and allocates repeat-safe repayments', async () => {
+    await setStock(10_000);
+    const { customerId, accountId } = await createCreditAccount(150_000);
+    const charge = await app.inject({
+      method: 'POST', url: '/api/v1/sales', headers: auth(cashierToken),
+      payload: salePayload({
+        customerId,
+        tenders: [{ method: 'ON_ACCOUNT', amount: 120_000, customerId }],
+      }),
+    });
+    expect(charge.statusCode).toBe(201);
+
+    const overLimit = await app.inject({
+      method: 'POST', url: '/api/v1/sales', headers: auth(cashierToken),
+      payload: salePayload({
+        customerId,
+        tenders: [{ method: 'ON_ACCOUNT', amount: 120_000, customerId }],
+      }),
+    });
+    expect(overLimit.statusCode).toBe(409);
+
+    const beforePayment = await app.inject({ method: 'GET', url: `/api/v1/credit/accounts/${accountId}`, headers: auth(adminToken) });
+    expect(beforePayment.statusCode).toBe(200);
+    expect(beforePayment.json().account.balance).toBe(120_000);
+    const invoice = beforePayment.json().transactions.find((entry: { type: string }) => entry.type === 'CHARGE');
+    expect(invoice.openAmount).toBe(120_000);
+    expect(new Date(invoice.dueAt).getTime()).toBeGreaterThan(Date.now());
+
+    const clientPaymentId = randomUUID();
+    const reference = `BANK${randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
+    const paymentPayload = { clientPaymentId, amount: 50_000, method: 'BANK_TRANSFER', reference };
+    const first = await app.inject({
+      method: 'POST', url: `/api/v1/credit/accounts/${accountId}/payments`, headers: auth(cashierToken), payload: paymentPayload,
+    });
+    expect(first.statusCode).toBe(201);
+    expect(first.json().balance).toBe(70_000);
+
+    const replay = await app.inject({
+      method: 'POST', url: `/api/v1/credit/accounts/${accountId}/payments`, headers: auth(cashierToken), payload: paymentPayload,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().replayed).toBe(true);
+    expect(replay.json().transactionId).toBe(first.json().transactionId);
+
+    const duplicateReference = await app.inject({
+      method: 'POST', url: `/api/v1/credit/accounts/${accountId}/payments`, headers: auth(cashierToken),
+      payload: { clientPaymentId: randomUUID(), amount: 10_000, method: 'BANK_TRANSFER', reference },
+    });
+    expect(duplicateReference.statusCode).toBe(409);
+
+    const finalPayment = await app.inject({
+      method: 'POST', url: `/api/v1/credit/accounts/${accountId}/payments`, headers: auth(cashierToken),
+      payload: { clientPaymentId: randomUUID(), amount: 70_000, method: 'CASH', shiftId: null },
+    });
+    expect(finalPayment.statusCode).toBe(409);
+    expect(finalPayment.json().error.message).toMatch(/shift/i);
+
+    const settled = await app.inject({
+      method: 'POST', url: `/api/v1/credit/accounts/${accountId}/payments`, headers: auth(cashierToken),
+      payload: { clientPaymentId: randomUUID(), amount: 70_000, method: 'BANK_TRANSFER', reference: `BANK${randomUUID().slice(0, 8).toUpperCase()}` },
+    });
+    expect(settled.statusCode).toBe(201);
+    expect(settled.json().balance).toBe(0);
+
+    const afterPayment = await app.inject({ method: 'GET', url: `/api/v1/credit/accounts/${accountId}`, headers: auth(adminToken) });
+    const settledInvoice = afterPayment.json().transactions.find((entry: { type: string }) => entry.type === 'CHARGE');
+    expect(settledInvoice.openAmount).toBe(0);
+    expect(afterPayment.json().account.balance).toBe(0);
+
+    const from = new Date(Date.now() - 86_400_000).toISOString();
+    const to = new Date(Date.now() + 86_400_000).toISOString();
+    const paymentReport = await app.inject({
+      method: 'GET', url: `/api/v1/reports/payments?from=${from}&to=${to}`, headers: auth(adminToken),
+    });
+    expect(paymentReport.statusCode).toBe(200);
+    expect(paymentReport.json().totals.creditSales).toBeGreaterThanOrEqual(120_000);
+    expect(paymentReport.json().totals.creditCollections).toBeGreaterThanOrEqual(120_000);
+
+    const cashierList = await app.inject({ method: 'GET', url: '/api/v1/credit/accounts', headers: auth(cashierToken) });
+    expect(cashierList.statusCode).toBe(200);
+    const deniedManagement = await app.inject({
+      method: 'POST', url: '/api/v1/credit/accounts', headers: auth(cashierToken),
+      payload: { customerId, storeId, creditLimit: 200_000, termsDays: 30 },
+    });
+    expect(deniedManagement.statusCode).toBe(403);
+  });
+
+  it('reverses an account charge on void and reduces debt on an account refund', async () => {
+    await setStock(10_000);
+    const voidAccount = await createCreditAccount();
+    const voidedSale = await app.inject({
+      method: 'POST', url: '/api/v1/sales', headers: auth(adminToken),
+      payload: salePayload({ customerId: voidAccount.customerId, tenders: [{ method: 'ON_ACCOUNT', amount: 120_000, customerId: voidAccount.customerId }] }),
+    });
+    expect(voidedSale.statusCode).toBe(201);
+    const voidResponse = await app.inject({
+      method: 'POST', url: `/api/v1/sales/${voidedSale.json().saleId}/void`, headers: auth(adminToken), payload: { reason: 'duplicate entry' },
+    });
+    expect(voidResponse.statusCode).toBe(200);
+    const voidAccountState = await app.inject({ method: 'GET', url: `/api/v1/credit/accounts/${voidAccount.accountId}`, headers: auth(adminToken) });
+    expect(voidAccountState.json().account.balance).toBe(0);
+    expect(voidAccountState.json().transactions.some((entry: { type: string }) => entry.type === 'VOID_REVERSAL')).toBe(true);
+
+    const refundAccount = await createCreditAccount();
+    const sale = await app.inject({
+      method: 'POST', url: '/api/v1/sales', headers: auth(adminToken),
+      payload: salePayload({ customerId: refundAccount.customerId, tenders: [{ method: 'ON_ACCOUNT', amount: 120_000, customerId: refundAccount.customerId }] }),
+    });
+    expect(sale.statusCode).toBe(201);
+    const detail = await app.inject({ method: 'GET', url: `/api/v1/sales/${sale.json().saleId}`, headers: auth(adminToken) });
+    const refund = await app.inject({
+      method: 'POST', url: '/api/v1/sales/refunds', headers: auth(adminToken),
+      payload: {
+        clientRefundId: randomUUID(), saleId: sale.json().saleId,
+        lines: [{ saleLineId: detail.json().lines[0].id, quantity: 1000, restock: true, reason: 'FAULTY' }],
+        refundTenders: [{ method: 'ON_ACCOUNT', amount: 120_000 }], reason: 'return to account',
+      },
+    });
+    expect(refund.statusCode).toBe(201);
+    const refundAccountState = await app.inject({ method: 'GET', url: `/api/v1/credit/accounts/${refundAccount.accountId}`, headers: auth(adminToken) });
+    expect(refundAccountState.json().account.balance).toBe(0);
+    expect(refundAccountState.json().transactions.some((entry: { type: string }) => entry.type === 'REFUND')).toBe(true);
+  });
+
+  it('includes cash account collections in the shift drawer close', async () => {
+    await setStock(10_000);
+    const { db } = await import('../src/db/client.js');
+    const { terminals } = await import('../src/db/schema/index.js');
+    const [terminal] = await db.insert(terminals).values({ storeId, code: `CR${randomUUID().slice(0, 4)}`, name: 'Credit till', receiptPrefix: `CR${randomUUID().slice(0, 6)}` }).returning();
+    const shift = await app.inject({ method: 'POST', url: '/api/v1/shifts/open', headers: auth(adminToken), payload: { storeId, terminalId: terminal!.id, openingFloat: 0 } });
+    const { customerId, accountId } = await createCreditAccount();
+    const sale = await app.inject({
+      method: 'POST', url: '/api/v1/sales', headers: auth(adminToken),
+      payload: salePayload({ terminalId: terminal!.id, shiftId: shift.json().shift.id, customerId, tenders: [{ method: 'ON_ACCOUNT', amount: 120_000, customerId }] }),
+    });
+    expect(sale.statusCode).toBe(201);
+    const received = await app.inject({
+      method: 'POST', url: `/api/v1/credit/accounts/${accountId}/payments`, headers: auth(adminToken),
+      payload: { clientPaymentId: randomUUID(), amount: 120_000, method: 'CASH', shiftId: shift.json().shift.id },
+    });
+    expect(received.statusCode).toBe(201);
+    const closed = await app.inject({
+      method: 'POST', url: `/api/v1/shifts/${shift.json().shift.id}/close`, headers: auth(adminToken), payload: { countedCash: 120_000 },
+    });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json().shift.expectedCash).toBe(120_000);
+  });
+
+  it('keeps account and customer balance caches in agreement with the ledger', async () => {
+    const { sql } = await import('../src/db/client.js');
+    const accountDrift = await sql`
+      SELECT a.id, a.balance, COALESCE(SUM(t.amount), 0) AS ledger
+      FROM credit_accounts a
+      LEFT JOIN credit_transactions t ON t.account_id = a.id
+      GROUP BY a.id
+      HAVING a.balance <> COALESCE(SUM(t.amount), 0)
+    `;
+    expect(accountDrift).toHaveLength(0);
+
+    const customerDrift = await sql`
+      SELECT c.id, c.balance, COALESCE(SUM(a.balance), 0) AS accounts
+      FROM customers c
+      LEFT JOIN credit_accounts a ON a.customer_id = c.id
+      GROUP BY c.id
+      HAVING c.balance <> COALESCE(SUM(a.balance), 0)
+    `;
+    expect(customerDrift).toHaveLength(0);
   });
 });
 

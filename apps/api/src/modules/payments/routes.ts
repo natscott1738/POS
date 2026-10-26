@@ -209,9 +209,13 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = mpesaC2bConfirmationSchema.safeParse(request.body);
     if (parsed.success) {
-      await handleC2bConfirmation(parsed.data).catch((err) => {
+      try {
+        await handleC2bConfirmation(parsed.data);
+      } catch (err) {
         request.log.error({ err }, 'failed to record C2B confirmation');
-      });
+        // Ask the provider to retry a transient persistence failure.
+        return reply.status(500).send({ ResultCode: 1, ResultDesc: 'Retry' });
+      }
     }
     return reply.send({ ResultCode: 0, ResultDesc: 'Accepted' });
   });
@@ -219,6 +223,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
   /** M-PESA validation hook: accept everything, then reconcile. */
   app.post('/mpesa/c2b/validation/:token', async (request, reply) => {
     assertCallbackToken(request, env.MPESA_CALLBACK_TOKEN);
+    assertSourceAllowed(request, env.MPESA_ALLOWED_IPS);
     return reply.send({ ResultCode: 0, ResultDesc: 'Accepted' });
   });
 
