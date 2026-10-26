@@ -105,7 +105,8 @@ export async function stkPush(params: {
         PhoneNumber: params.phone,
         CallBackURL: params.callbackUrl,
         AccountReference: params.accountReference.slice(0, 12),
-        TransactionDesc: params.description.slice(0, 60),
+        // Daraja's M-PESA Express contract caps TransactionDesc at 13 chars.
+        TransactionDesc: params.description.slice(0, 13),
       }),
     },
     20_000,
