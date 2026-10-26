@@ -107,13 +107,13 @@ that flow; see [docs/QUICKBOOKS.md](QUICKBOOKS.md).
 
 ```
 MPESA_ENABLED=true
-MPESA_ENVIRONMENT=production
+MPESA_ENVIRONMENT=production   # use sandbox while testing
 MPESA_SHORTCODE=            # BusinessShortCode used at Go-Live
 MPESA_PARTY_B=              # STK recipient; defaults to MPESA_SHORTCODE
 MPESA_PASSKEY=              # from Daraja for this shortcode/product
 MPESA_TRANSACTION_TYPE=CustomerBuyGoodsOnline   # till; PayBill for paybill
 MPESA_CALLBACK_TOKEN=       # openssl rand -hex 24
-MPESA_ALLOWED_IPS=          # current callback ranges verified with Safaricom
+MPESA_ALLOWED_IPS=          # required for live M-PESA on a production server; optional in sandbox
 ```
 
 Register this callback URL with Safaricom:

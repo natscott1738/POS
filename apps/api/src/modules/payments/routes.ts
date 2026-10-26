@@ -167,8 +167,9 @@ export async function paymentRoutes(app: FastifyInstance): Promise<void> {
 
 /**
  * Public webhook endpoints. These are unauthenticated by necessity, so they are
- * defended in layers: an unguessable path token, a source-IP allowlist, a strict
- * schema, a small body cap, and idempotent handlers.
+ * defended in layers: an unguessable path token, an optional source-IP allowlist
+ * (required for live M-PESA in production), a strict schema, a small body cap,
+ * and idempotent handlers.
  *
  * They are mounted outside the authenticated API prefix and never reveal whether
  * a given transaction exists.
@@ -251,8 +252,9 @@ function assertCallbackToken(request: FastifyRequest, expected: string | undefin
 }
 
 /**
- * Restricts callbacks to the provider's published egress ranges. Supports bare
- * addresses and CIDR blocks; an empty list disables the check for local development.
+ * Restricts callbacks to configured provider egress ranges. Supports bare
+ * addresses and CIDR blocks. An empty list skips this check; production live
+ * M-PESA refuses to start without a list, while sandbox can use its secret token.
  */
 function assertSourceAllowed(request: FastifyRequest, allowed: string[]): void {
   if (allowed.length === 0) return;

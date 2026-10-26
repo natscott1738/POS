@@ -134,7 +134,7 @@ const schema = z.object({
     .default('CustomerPayBillOnline'),
   /** Unguessable path segment on the public callback URL; a cheap shared secret. */
   MPESA_CALLBACK_TOKEN: z.string().min(24).optional(),
-  /** Safaricom egress ranges. Empty disables the check (dev only). */
+  /** Safaricom egress ranges. Optional for sandbox; required for live M-PESA in production. */
   MPESA_ALLOWED_IPS: z
     .string()
     .default('')
@@ -248,8 +248,8 @@ function load(): Env {
     if (env.CORS_ORIGINS.some((o) => o.startsWith('http://') && !o.includes('localhost'))) {
       problems.push('CORS_ORIGINS must use https in production');
     }
-    if (env.MPESA_ENABLED && env.MPESA_ALLOWED_IPS.length === 0) {
-      problems.push('MPESA_ALLOWED_IPS must be set in production so callbacks are source-restricted');
+    if (env.MPESA_ENABLED && env.MPESA_ENVIRONMENT === 'production' && env.MPESA_ALLOWED_IPS.length === 0) {
+      problems.push('MPESA_ALLOWED_IPS must be set for live M-PESA in production so callbacks are source-restricted');
     }
     if (env.BACKUP_ENABLED && !env.BACKUP_ENCRYPTION_KEY) {
       problems.push('BACKUP_ENCRYPTION_KEY is required in production');

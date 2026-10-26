@@ -114,9 +114,11 @@ callbacks, and Go-Live process in the [M-PESA Express documentation](https://dev
    https://api.<client-domain>/api/v1/webhooks/mpesa/stk/<MPESA_CALLBACK_TOKEN>
    ```
 
-   Keep the callback token secret. In production, populate `MPESA_ALLOWED_IPS`
-   from Safaricom's current official callback source ranges. The checked-in
-   sample intentionally contains no IP list because provider ranges can change.
+   Keep the callback token secret. For live M-PESA on a production server,
+   populate `MPESA_ALLOWED_IPS` from Safaricom's current official callback source
+   ranges. Sandbox testing can proceed without this list; the secret callback
+   token is still checked. The checked-in sample intentionally contains no IP
+   list because provider ranges can change.
 5. Restart the API and confirm health reports M-PESA `sandbox`, then use the
    till's M-PESA tab to test: accepted prompt, successful callback, customer
    cancellation, timeout/no callback, duplicate callback, short amount, and
