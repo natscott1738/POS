@@ -17,7 +17,15 @@ RUN npm prune --omit=dev --workspaces --include-workspace-root
 FROM node:22-bookworm-slim AS runtime
 # postgresql-client supplies pg_dump for the nightly backup job.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client tini ca-certificates \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && install -d /usr/share/postgresql-common/pgdg \
+ && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+ && printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: bookworm-pgdg\nArchitectures: %s\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc\n' \
+      "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/pgdg.sources \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-client-16 tini \
+ && pg_dump --version | grep -F ' 16.' \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
