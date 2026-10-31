@@ -4,7 +4,7 @@ import { useCart, type CartLine } from '../lib/cart.js';
 import { searchLocal, findByBarcode, enqueue, db, getMeta, parkedCount, type CachedVariant } from '../lib/db.js';
 import { api, ApiError } from '../lib/api.js';
 import { useAuth, useNetwork, toast } from '../lib/store.js';
-import { runSync } from '../lib/sync.js';
+import { OFFLINE_CATALOGUE_STALE_AFTER_MS, runSync } from '../lib/sync.js';
 import { Modal } from '../components/Modal.js';
 import { Field } from '../components/ui.js';
 import { Money, formatQuantity } from '../components/Money.js';
@@ -18,12 +18,16 @@ export default function Checkout() {
   const cart = useCart();
   const { user, storeId, terminalId } = useAuth();
   const online = useNetwork((s) => s.serverReachable);
+  const lastCatalogueSyncAt = useNetwork((s) => s.lastCatalogueSyncAt);
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<CachedVariant[]>([]);
   const [paying, setPaying] = useState(false);
   const [parking, setParking] = useState(false);
   const [viewingParked, setViewingParked] = useState(false);
   const [heldCount, setHeldCount] = useState(0);
+  const [catalogueCount, setCatalogueCount] = useState(0);
+  const [catalogueChecked, setCatalogueChecked] = useState(false);
+  const [now, setNow] = useState(Date.now());
   /**
    * Typing "3*" before scanning sells three of the next item. Standard on retail
    * tills and far faster than scanning the same thing three times.
@@ -39,6 +43,21 @@ export default function Checkout() {
 
   const refreshHeld = () => void parkedCount().then(setHeldCount);
   useEffect(refreshHeld, []);
+
+  useEffect(() => {
+    void db.variants.count().then((count) => {
+      setCatalogueCount(count);
+      setCatalogueChecked(true);
+    });
+  }, [lastCatalogueSyncAt]);
+
+  useEffect(() => {
+    const clock = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(clock);
+  }, []);
+
+  const catalogueIsStale = !lastCatalogueSyncAt || now - lastCatalogueSyncAt > OFFLINE_CATALOGUE_STALE_AFTER_MS;
+  const catalogueAge = lastCatalogueSyncAt ? formatAge(now - lastCatalogueSyncAt) : 'never';
 
   /**
    * Shop-floor shortcuts. A cashier's hands are on the scanner and the keyboard,
@@ -137,6 +156,14 @@ export default function Checkout() {
     <div className="till">
       <div className="till-left">
         <ShiftBar storeId={storeId} terminalId={terminalId} />
+        {!online && catalogueChecked && (catalogueCount === 0 || catalogueIsStale) && (
+          <div className="banner warning" style={{ margin: 0 }} role="status">
+            <strong>Offline catalogue needs attention.</strong>{' '}
+            {catalogueCount === 0
+              ? 'No products are cached on this till. Do not take sales until it reconnects and downloads the catalogue.'
+              : `This till has ${catalogueCount} cached products, last refreshed ${catalogueAge} ago. Prices or stock may have changed; reconnect and sync before relying on the catalogue.`}
+          </div>
+        )}
         <form className="scan-row" onSubmit={(e) => void handleScan(e)}>
           <input
             ref={scanRef}
@@ -282,6 +309,16 @@ export default function Checkout() {
       )}
     </div>
   );
+}
+
+function formatAge(ageMs: number): string {
+  const minutes = Math.max(0, Math.floor(ageMs / 60_000));
+  if (minutes < 1) return 'less than a minute ago';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 function BasketLine({ line }: { line: CartLine }) {

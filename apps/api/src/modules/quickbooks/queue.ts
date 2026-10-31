@@ -1,8 +1,9 @@
 import { and, eq, lte, sql, inArray, desc } from 'drizzle-orm';
 import { db, type Executor, type Tx } from '../../db/client.js';
-import { qbSyncQueue } from '../../db/schema/index.js';
+import { qbSyncQueue, qbConnections, qbMappings } from '../../db/schema/index.js';
 import { sha256Hex } from '../../core/crypto.js';
 import type { QbEntity } from '@pos/shared';
+import { env } from '../../config/env.js';
 
 export interface EnqueueInput {
   storeId: string;
@@ -62,6 +63,17 @@ export async function claimJobs(workerId: string, limit = 20) {
     WHERE id IN (
       SELECT id FROM ${qbSyncQueue}
       WHERE status = 'PENDING' AND next_attempt_at <= now()
+        AND EXISTS (
+          SELECT 1 FROM ${qbConnections}
+          WHERE ${qbConnections.storeId} = ${qbSyncQueue.storeId}
+            AND ${qbConnections.isActive} = true
+            AND ${qbConnections.environment} = ${env.QB_ENVIRONMENT}
+        )
+        AND EXISTS (
+          SELECT 1 FROM ${qbMappings}
+          WHERE ${qbMappings.storeId} = ${qbSyncQueue.storeId}
+            AND ${qbMappings.autoSyncEnabled} = true
+        )
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED

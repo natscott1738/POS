@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { formatCents, changeDue, type CreateSaleInput, type TenderInput } from '@pos/shared';
 import { useCart } from '../lib/cart.js';
 import { api, ApiError } from '../lib/api.js';
-import { enqueueSale, db, getMeta } from '../lib/db.js';
+import { enqueueSale, db, getMeta, pendingCount } from '../lib/db.js';
 import { useAuth, useNetwork, toast } from '../lib/store.js';
 import { useApi } from '../lib/useApi.js';
 import { runSync } from '../lib/sync.js';
@@ -126,7 +126,10 @@ export function PaymentPanel({
     // upload operation are committed together in IndexedDB.
     try {
       if (online) await db.sales.put(localSale);
-      else await enqueueSale(localSale, operation);
+      else {
+        await enqueueSale(localSale, operation);
+        void pendingCount().then((count) => useNetwork.getState().setPending(count)).catch(() => {});
+      }
     } catch {
       toast.error('This till could not save the sale locally. Stop checkout and ask a manager to check this device before taking payment.');
       setSubmitting(false);
@@ -169,6 +172,7 @@ export function PaymentPanel({
       if (err instanceof ApiError && err.code === 'NETWORK') {
         try {
           await enqueueSale(localSale, operation);
+          void pendingCount().then((count) => useNetwork.getState().setPending(count)).catch(() => {});
         } catch {
           toast.error('The server connection dropped and this till could not queue the sale. Keep this screen open, do not take payment again, and contact a manager to reconcile it.');
           setSubmitting(false);

@@ -67,6 +67,39 @@ export function isOfflineReady(): boolean {
   return offlineReady;
 }
 
+export interface PwaReadiness {
+  installed: boolean;
+  appShellAvailable: boolean;
+  persistentStorage: boolean | null;
+}
+
+/** Reports browser-local capabilities without assuming a particular platform. */
+export async function readPwaReadiness(): Promise<PwaReadiness> {
+  const installed = window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+  let appShellAvailable = false;
+  if ('serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      appShellAvailable = Boolean(registration?.active);
+    } catch {
+      appShellAvailable = false;
+    }
+  }
+
+  let persistentStorage: boolean | null = null;
+  if (navigator.storage?.persisted) {
+    try {
+      persistentStorage = await navigator.storage.persisted();
+    } catch {
+      persistentStorage = false;
+    }
+  }
+
+  return { installed, appShellAvailable, persistentStorage };
+}
+
 /**
  * Applies a waiting update. Refuses while a basket is open: finishing the sale
  * in front of you matters more than running the newest build.

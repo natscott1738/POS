@@ -24,9 +24,16 @@ import { useNetwork, useAuth, toast } from './store.js';
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 const onOnline = () => void runSync();
+let lastSyncStartedAt = 0;
+const RESUME_SYNC_THROTTLE_MS = 10_000;
+const onResume = () => {
+  if (document.visibilityState !== 'visible' || Date.now() - lastSyncStartedAt < RESUME_SYNC_THROTTLE_MS) return;
+  void runSync();
+};
 
 const PUSH_BATCH_SIZE = 100;
 const INTERVAL_MS = 20_000;
+export const OFFLINE_CATALOGUE_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 let warnedUnregistered = false;
 
@@ -67,15 +74,31 @@ export function startSync(): void {
   // If the browser grants it, protect the till's queue and cached catalogue
   // from automatic storage eviction. This is best effort and never blocks sales.
   void requestPersistentStorage();
+  void Promise.all([
+    getMeta<number | null>('lastSyncAt', null),
+    getMeta<number | null>('catalogueSyncedAt', null),
+  ]).then(([lastSyncAt, catalogueSyncedAt]) => {
+    const state = useNetwork.getState();
+    if (state.lastSyncAt === null && lastSyncAt !== null) state.setLastSyncAt(lastSyncAt);
+    if (state.lastCatalogueSyncAt === null && catalogueSyncedAt !== null) {
+      state.setLastCatalogueSyncAt(catalogueSyncedAt);
+    }
+  });
   void runSync();
   timer = setInterval(() => void runSync(), INTERVAL_MS);
   window.addEventListener('online', onOnline);
+  window.addEventListener('focus', onResume);
+  window.addEventListener('pageshow', onResume);
+  document.addEventListener('visibilitychange', onResume);
 }
 
 export function stopSync(): void {
   if (timer) clearInterval(timer);
   timer = null;
   window.removeEventListener('online', onOnline);
+  window.removeEventListener('focus', onResume);
+  window.removeEventListener('pageshow', onResume);
+  document.removeEventListener('visibilitychange', onResume);
 }
 
 export async function runSync(): Promise<void> {
@@ -88,6 +111,7 @@ export async function runSync(): Promise<void> {
   }
 
   running = true;
+  lastSyncStartedAt = Date.now();
   useNetwork.getState().setSyncing(true);
 
   try {
@@ -99,8 +123,10 @@ export async function runSync(): Promise<void> {
       toast.warning('Sales made offline are saved on this till. They upload once an administrator signs in on it.');
     }
     await pullCatalogue(storeId, deviceId);
+    const syncedAt = Date.now();
+    await setMeta('lastSyncAt', syncedAt);
     useNetwork.getState().setServerReachable(true);
-    useNetwork.getState().markSynced();
+    useNetwork.getState().markSynced(syncedAt);
   } catch (err) {
     if (err instanceof ApiError && err.code === 'NETWORK') {
       useNetwork.getState().setServerReachable(false);
@@ -221,6 +247,7 @@ async function pullCatalogue(storeId: string, deviceId: string): Promise<void> {
       })),
     );
     await setMeta('syncCursor', snapshot.cursor);
+    await recordCatalogueSync();
     return;
   }
 
@@ -269,7 +296,17 @@ async function pullCatalogue(storeId: string, deviceId: string): Promise<void> {
 
   // Keep draining while the server says there is more, rather than waiting a
   // full interval per page.
-  if (delta.hasMore) await pullCatalogue(storeId, deviceId);
+  if (delta.hasMore) {
+    await pullCatalogue(storeId, deviceId);
+  } else {
+    await recordCatalogueSync();
+  }
+}
+
+async function recordCatalogueSync(): Promise<void> {
+  const syncedAt = Date.now();
+  await setMeta('catalogueSyncedAt', syncedAt);
+  useNetwork.getState().setLastCatalogueSyncAt(syncedAt);
 }
 
 function labelFor(attributes: unknown): string | null {

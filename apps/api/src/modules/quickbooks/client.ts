@@ -106,6 +106,13 @@ export async function activeConnection(storeId: string): Promise<ActiveConnectio
 
   if (!connection || !connection.isActive) throw notFound('QuickBooks connection');
 
+  // An old sandbox OAuth connection must never be used just because the process
+  // has been switched to production (or vice versa). Reconnect the intended
+  // company before any reads or writes continue.
+  if (connection.environment !== env.QB_ENVIRONMENT) {
+    throw integrationUnavailable('QuickBooks (connection environment mismatch)');
+  }
+
   if (connection.refreshTokenExpiresAt.getTime() < Date.now()) {
     await db
       .update(qbConnections)

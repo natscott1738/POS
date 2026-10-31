@@ -204,6 +204,59 @@ export async function pendingCount(): Promise<number> {
   return db.queue.where('status').anyOf('PENDING', 'SENDING', 'FAILED').count();
 }
 
+export interface OfflineSaleReview extends LocalSale {
+  queueStatus: QueuedOperation['status'] | null;
+  attempts: number;
+  lastError: string | null;
+}
+
+/** Sales not yet confirmed by the server, paired with their upload state. */
+export async function listOfflineSales(): Promise<OfflineSaleReview[]> {
+  const sales = await db.sales.where('status').anyOf('QUEUED', 'REJECTED').toArray();
+  const operations = await db.queue.bulkGet(sales.map((sale) => sale.clientSaleId));
+  const results = sales.map((sale, index) => {
+    const operation = operations[index];
+    return {
+      ...sale,
+      queueStatus: operation?.status ?? null,
+      attempts: operation?.attempts ?? 0,
+      lastError: operation?.lastError ?? sale.error ?? null,
+    } satisfies OfflineSaleReview;
+  });
+  return results.sort((a, b) => b.soldAt.localeCompare(a.soldAt));
+}
+
+/** Requeues one reviewed rejection without creating a new sale or payment. */
+export async function retryOfflineSale(clientSaleId: string): Promise<boolean> {
+  return db.transaction('rw', db.sales, db.queue, async () => {
+    const [sale, operation] = await Promise.all([
+      db.sales.get(clientSaleId),
+      db.queue.get(clientSaleId),
+    ]);
+    if (!sale || sale.status !== 'REJECTED' || !operation || operation.status !== 'FAILED') return false;
+
+    await db.sales.put({ ...sale, status: 'QUEUED', error: undefined });
+    await db.queue.put({
+      ...operation,
+      status: 'PENDING',
+      attempts: 0,
+      lastError: undefined,
+      attemptStartedAt: undefined,
+      retryAt: undefined,
+    });
+    return true;
+  });
+}
+
+export async function offlineQueueCounts(): Promise<{ pending: number; sending: number; failed: number }> {
+  const [pending, sending, failed] = await Promise.all([
+    db.queue.where('status').equals('PENDING').count(),
+    db.queue.where('status').equals('SENDING').count(),
+    db.queue.where('status').equals('FAILED').count(),
+  ]);
+  return { pending, sending, failed };
+}
+
 /** Best effort; protects IndexedDB queue/catalogue from automatic eviction. */
 export async function requestPersistentStorage(): Promise<boolean | null> {
   if (!navigator.storage?.persist) return null;

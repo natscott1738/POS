@@ -3,7 +3,7 @@ import { and, eq, gte, lte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { qbConnectQuery, qbCallbackQuery, qbMappingSchema, qbSyncTriggerSchema, qbQueueQuery, uuid } from '@pos/shared';
 import { db } from '../../db/client.js';
-import { qbConnections, qbOauthStates, qbMappings, sales, refunds } from '../../db/schema/index.js';
+import { qbConnections, qbOauthStates, qbMappings, qbEntityLinks, sales, refunds } from '../../db/schema/index.js';
 import { env } from '../../config/env.js';
 import { parseBody, parseQuery } from '../../core/validation.js';
 import { requirePermissions, getAuth, assertStoreAccess, visibleStoreIds } from '../../auth/context.js';
@@ -61,33 +61,55 @@ export async function quickbooksRoutes(app: FastifyInstance): Promise<void> {
 
     const tokens = await exchangeCode(query.code);
 
-    await db
-      .insert(qbConnections)
-      .values({
-        storeId: record.storeId,
-        realmId: query.realmId,
-        accessTokenEncrypted: encryptSecret(tokens.accessToken, record.storeId),
-        refreshTokenEncrypted: encryptSecret(tokens.refreshToken, record.storeId),
-        accessTokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
-        refreshTokenExpiresAt: new Date(Date.now() + tokens.refreshExpiresIn * 1000),
-        environment: env.QB_ENVIRONMENT,
-        isActive: true,
-        connectedBy: record.userId,
-      })
-      .onConflictDoUpdate({
-        target: qbConnections.storeId,
-        set: {
+    await db.transaction(async (tx) => {
+      const [previous] = await tx
+        .select({ realmId: qbConnections.realmId, environment: qbConnections.environment })
+        .from(qbConnections)
+        .where(eq(qbConnections.storeId, record.storeId))
+        .for('update');
+
+      const companyChanged =
+        !previous || previous.realmId !== query.realmId || previous.environment !== env.QB_ENVIRONMENT;
+
+      // Account, item, customer and transaction IDs belong to one QBO company.
+      // Never reuse sandbox/company links against a different production realm.
+      if (companyChanged) {
+        await tx.delete(qbEntityLinks).where(eq(qbEntityLinks.storeId, record.storeId));
+        await tx
+          .update(qbMappings)
+          .set({ autoSyncEnabled: false, updatedAt: new Date() })
+          .where(eq(qbMappings.storeId, record.storeId));
+      }
+
+      await tx
+        .insert(qbConnections)
+        .values({
+          storeId: record.storeId,
           realmId: query.realmId,
           accessTokenEncrypted: encryptSecret(tokens.accessToken, record.storeId),
           refreshTokenEncrypted: encryptSecret(tokens.refreshToken, record.storeId),
           accessTokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
           refreshTokenExpiresAt: new Date(Date.now() + tokens.refreshExpiresIn * 1000),
+          environment: env.QB_ENVIRONMENT,
           isActive: true,
-          disconnectedAt: null,
-          lastSyncError: null,
-          updatedAt: new Date(),
-        },
-      });
+          connectedBy: record.userId,
+        })
+        .onConflictDoUpdate({
+          target: qbConnections.storeId,
+          set: {
+            realmId: query.realmId,
+            accessTokenEncrypted: encryptSecret(tokens.accessToken, record.storeId),
+            refreshTokenEncrypted: encryptSecret(tokens.refreshToken, record.storeId),
+            accessTokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
+            refreshTokenExpiresAt: new Date(Date.now() + tokens.refreshExpiresIn * 1000),
+            environment: env.QB_ENVIRONMENT,
+            isActive: true,
+            disconnectedAt: null,
+            lastSyncError: null,
+            updatedAt: new Date(),
+          },
+        });
+    });
 
     await writeAudit(db, request, {
       action: 'QUICKBOOKS_CONNECTED',
@@ -98,7 +120,7 @@ export async function quickbooksRoutes(app: FastifyInstance): Promise<void> {
     });
 
     // Redirect back into the SPA rather than rendering HTML from the API.
-    const target = record.returnTo && record.returnTo.startsWith('/') ? record.returnTo : '/settings/quickbooks';
+    const target = record.returnTo && record.returnTo.startsWith('/') ? record.returnTo : '/quickbooks';
     return reply.redirect(`${env.CORS_ORIGINS[0] ?? ''}${target}?connected=1`);
   });
 
@@ -123,9 +145,9 @@ export async function quickbooksRoutes(app: FastifyInstance): Promise<void> {
     const [mapping] = await db.select().from(qbMappings).where(eq(qbMappings.storeId, query.storeId)).limit(1);
 
     return {
-      connected: Boolean(connection?.isActive),
+      connected: Boolean(connection?.isActive && connection.environment === env.QB_ENVIRONMENT),
       connection: connection ?? null,
-      mappingConfigured: Boolean(mapping),
+      mappingConfigured: Boolean(mapping?.autoSyncEnabled),
       // Surfaced early because a lapsed refresh token silently stops accounting.
       reconnectBy: connection?.refreshTokenExpiresAt ?? null,
       queue: await queueDepth(query.storeId),

@@ -187,11 +187,14 @@ interface NetworkState {
   pending: number;
   syncing: boolean;
   lastSyncAt: number | null;
+  lastCatalogueSyncAt: number | null;
   setOnline: (online: boolean) => void;
   setServerReachable: (reachable: boolean) => void;
   setPending: (pending: number) => void;
   setSyncing: (syncing: boolean) => void;
-  markSynced: () => void;
+  setLastSyncAt: (at: number | null) => void;
+  setLastCatalogueSyncAt: (at: number | null) => void;
+  markSynced: (at?: number) => void;
 }
 
 export const useNetwork = create<NetworkState>((set) => ({
@@ -200,11 +203,14 @@ export const useNetwork = create<NetworkState>((set) => ({
   pending: 0,
   syncing: false,
   lastSyncAt: null,
+  lastCatalogueSyncAt: null,
   setOnline: (online) => set({ online }),
   setServerReachable: (serverReachable) => set({ serverReachable }),
   setPending: (pending) => set({ pending }),
   setSyncing: (syncing) => set({ syncing }),
-  markSynced: () => set({ lastSyncAt: Date.now(), syncing: false }),
+  setLastSyncAt: (lastSyncAt) => set({ lastSyncAt }),
+  setLastCatalogueSyncAt: (lastCatalogueSyncAt) => set({ lastCatalogueSyncAt }),
+  markSynced: (lastSyncAt = Date.now()) => set({ lastSyncAt, syncing: false }),
 }));
 
 window.addEventListener('online', () => useNetwork.getState().setOnline(true));
