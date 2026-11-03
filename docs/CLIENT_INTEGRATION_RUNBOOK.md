@@ -95,11 +95,18 @@ callbacks, and Go-Live process in the [M-PESA Express documentation](https://dev
    MPESA_CONSUMER_SECRET=<sandbox consumer secret>
    MPESA_SHORTCODE=<BusinessShortCode issued for the app>
    MPESA_PARTY_B=<STK recipient; defaults to MPESA_SHORTCODE>
+   MPESA_ACCOUNT_REFERENCE=<fixed Paybill account reference, if required>
    MPESA_PASSKEY=<sandbox passkey>
    MPESA_TRANSACTION_TYPE=CustomerPayBillOnline
    MPESA_CALLBACK_TOKEN=<random secret, at least 24 characters>
    MPESA_STK_TIMEOUT_SECONDS=120
    ```
+
+   For the client's Paybill, the provided values are shortcode `522533` and
+   account reference `7972068`. Set `MPESA_ACCOUNT_REFERENCE=7972068` so STK
+   prompts carry the same account reference customers use for manual Paybill
+   payments. Confirm with Safaricom that the STK `PartyB` is also `522533`; the
+   code defaults it to the shortcode when `MPESA_PARTY_B` is blank.
 
    Use `CustomerPayBillOnline` for Paybill and `CustomerBuyGoodsOnline` for a
    Till. Safaricom's Till instructions distinguish the Go-Live
@@ -138,6 +145,11 @@ callbacks, and Go-Live process in the [M-PESA Express documentation](https://dev
    C2B registration is optional for STK Push. Safaricom states sandbox URLs
    need to be registered for each simulation and production URLs re-registered
    after deletion; see the [Customer to Business instructions](https://developer.safaricom.co.ke/apis/CustomerToBusiness).
+   For manual payments to this client's Paybill, choose **M-Pesa Sandbox** as
+   well as **Lipa Na M-Pesa Sandbox** in the Daraja app so the C2B API is
+   available. In production, the C2B app/product must also be approved for
+   shortcode `522533`; register the live callback pair after Go-Live. The
+   customer enters account/reference `7972068` when paying manually.
 
 ### Production cutover
 
@@ -149,6 +161,8 @@ callbacks, and Go-Live process in the [M-PESA Express documentation](https://dev
 2. Obtain the production consumer key/secret and production passkey from the
    approved Daraja app. Confirm shortcode, PartyB, transaction type, callback
    hostname, settlement account, and Safaricom support contact with the client.
+   For this Paybill use shortcode `522533`, account reference `7972068`, and
+   `CustomerPayBillOnline`, subject to Safaricom confirming the Go-Live values.
 3. Keep the sandbox values saved securely for rollback, then set production
    values in the production secret manager: `MPESA_ENVIRONMENT=production`,
    production keys/passkey, correct shortcode/PartyB/type, `MPESA_ENABLED=true`,

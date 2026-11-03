@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db, closeDb } from './client.js';
 import {
   stores,
@@ -104,14 +104,38 @@ async function main(): Promise<void> {
 
   /* -------------------------------- Catalogue ------------------------------- */
 
-  const [produce] = await db.insert(categories).values({ name: 'Fresh Produce' }).onConflictDoNothing().returning();
-  const [beverages] = await db.insert(categories).values({ name: 'Beverages' }).onConflictDoNothing().returning();
-  const [apparel] = await db.insert(categories).values({ name: 'Apparel' }).onConflictDoNothing().returning();
+  const categoryNames = [
+    'Animal feeds',
+    'Mineral blocks and supplements',
+    'Consumables',
+    'Veterinary medicines',
+    'Fertilizers and Agrochemicals',
+  ];
+  await db
+    .update(categories)
+    .set({ isActive: false })
+    .where(inArray(categories.name, ['Fresh Produce', 'Beverages', 'Apparel', 'Bakery & Dairy', 'Groceries', 'Household']));
+
+  const categoryIds = new Map<string, string>();
+  for (const [index, name] of categoryNames.entries()) {
+    const [existing] = await db.select({ id: categories.id }).from(categories).where(eq(categories.name, name)).limit(1);
+    const [category] = existing
+      ? [existing]
+      : await db
+          .insert(categories)
+          .values({ name, sortOrder: index + 1, isActive: true })
+          .returning({ id: categories.id });
+    if (category) {
+      categoryIds.set(name, category.id);
+      await db.update(categories).set({ sortOrder: index + 1, isActive: true }).where(eq(categories.id, category.id));
+    }
+  }
+  const consumablesCategoryId = categoryIds.get('Consumables') ?? null;
 
   const catalogue = [
     {
       name: 'Hass Avocado',
-      categoryId: produce?.id ?? null,
+      categoryId: consumablesCategoryId,
       taxCode: 'ZERO_RATED' as const,
       taxRate: 0,
       uom: 'KG' as const,
@@ -120,7 +144,7 @@ async function main(): Promise<void> {
     },
     {
       name: 'Kenyan AA Coffee 500g',
-      categoryId: beverages?.id ?? null,
+      categoryId: consumablesCategoryId,
       taxCode: 'STANDARD' as const,
       taxRate: 1600,
       uom: 'EACH' as const,
@@ -129,7 +153,7 @@ async function main(): Promise<void> {
     },
     {
       name: 'Cotton T-Shirt',
-      categoryId: apparel?.id ?? null,
+      categoryId: consumablesCategoryId,
       taxCode: 'STANDARD' as const,
       taxRate: 1600,
       uom: 'EACH' as const,
@@ -146,7 +170,7 @@ async function main(): Promise<void> {
     },
     {
       name: 'Bottled Water 1L',
-      categoryId: beverages?.id ?? null,
+      categoryId: consumablesCategoryId,
       taxCode: 'STANDARD' as const,
       taxRate: 1600,
       uom: 'EACH' as const,

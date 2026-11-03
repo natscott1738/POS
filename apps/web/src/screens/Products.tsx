@@ -36,7 +36,7 @@ interface Product {
 export default function Products() {
   const can = useAuth((s) => s.can);
   const { data, loading, reload } = useApi<{ products: Product[] }>('/catalog/products?limit=200&includeInactive=true');
-  const { data: categories } = useApi<{ categories: Array<{ id: string; name: string }> }>('/catalog/categories');
+  const { data: categories } = useApi<{ categories: Array<{ id: string; name: string; isActive: boolean }> }>('/catalog/categories');
   const [editing, setEditing] = useState<Product | 'new' | null>(null);
   const [pricing, setPricing] = useState<Variant | null>(null);
   const [importing, setImporting] = useState(false);
@@ -186,7 +186,7 @@ function ProductForm({
   onDone,
 }: {
   product: Product | null;
-  categories: Array<{ id: string; name: string }>;
+  categories: Array<{ id: string; name: string; isActive: boolean }>;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -196,6 +196,7 @@ function ProductForm({
   const [unitOfMeasure, setUom] = useState(product?.unitOfMeasure ?? 'EACH');
   const [trackInventory, setTrack] = useState(product?.trackInventory ?? true);
   const [isActive, setActive] = useState(product?.isActive ?? true);
+  const categoryOptions = categories.filter((category) => category.isActive || category.id === categoryId);
   const [variants, setVariants] = useState<DraftVariant[]>(
     product?.variants.map((v) => ({
       sku: v.sku,
@@ -266,7 +267,7 @@ function ProductForm({
         <Field label="Category">
           <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
             <option value="">Uncategorised</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
         <Field label="Tax treatment">

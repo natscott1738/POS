@@ -1116,9 +1116,9 @@ describe('catalogue import', () => {
   it('imports a clean file, grouping variants and setting opening stock', async () => {
     const csv = [
       'name,sku,barcode,category,variant,price,cost,tax,unit,reorder_point,opening_stock',
-      'Imported Shirt,IMP-SH-S,7001000000011,Apparel,Small,850.00,420.00,STANDARD,EACH,5,12',
-      'Imported Shirt,IMP-SH-M,7001000000028,Apparel,Medium,850.00,420.00,STANDARD,EACH,5,8',
-      'Imported Flour,IMP-FLR,7001000000035,Groceries,,180.00,140.00,ZERO_RATED,EACH,24,40',
+      'Imported Shirt,IMP-SH-S,7001000000011,Consumables,Small,850.00,420.00,STANDARD,EACH,5,12',
+      'Imported Shirt,IMP-SH-M,7001000000028,Consumables,Medium,850.00,420.00,STANDARD,EACH,5,8',
+      'Imported Flour,IMP-FLR,7001000000035,Consumables,,180.00,140.00,ZERO_RATED,EACH,24,40',
     ].join('\n');
 
     const response = await app.inject({

@@ -232,8 +232,11 @@ export async function applyImport(
     const categoryCache = new Map<string, string>();
     for (const row of input.rows) {
       if (!row.category || categoryCache.has(row.category)) continue;
-      const [existing] = await tx.select({ id: categories.id }).from(categories).where(eq(categories.name, row.category)).limit(1);
+      const [existing] = await tx.select({ id: categories.id, isActive: categories.isActive }).from(categories).where(eq(categories.name, row.category)).limit(1);
       if (existing) {
+        if (!existing.isActive) {
+          throw badRequest(`Category "${row.category}" has been retired. Choose one of the active categories before importing.`);
+        }
         categoryCache.set(row.category, existing.id);
       } else {
         const [created] = await tx.insert(categories).values({ name: row.category }).returning({ id: categories.id });
@@ -345,10 +348,10 @@ export async function applyImport(
 export function importTemplate(): string {
   return [
     'name,sku,barcode,category,variant,price,cost,tax,unit,reorder_point,opening_stock',
-    'Kenyan AA Coffee 500g,COF-AA-500,6001234500024,Beverages,,1200.00,780.00,STANDARD,EACH,10,50',
-    'Cotton T-Shirt,TSH-NVY-M,6001234500048,Apparel,Navy / M,850.00,420.00,STANDARD,EACH,5,20',
-    'Cotton T-Shirt,TSH-NVY-L,6001234500055,Apparel,Navy / L,850.00,420.00,STANDARD,EACH,5,20',
-    'Maize Flour 2kg,FLR-2KG,6001234500086,Groceries,,180.00,140.00,ZERO_RATED,EACH,24,100',
+    'Kenyan AA Coffee 500g,COF-AA-500,6001234500024,Consumables,,1200.00,780.00,STANDARD,EACH,10,50',
+    'Cotton T-Shirt,TSH-NVY-M,6001234500048,Consumables,Navy / M,850.00,420.00,STANDARD,EACH,5,20',
+    'Cotton T-Shirt,TSH-NVY-L,6001234500055,Consumables,Navy / L,850.00,420.00,STANDARD,EACH,5,20',
+    'Maize Flour 2kg,FLR-2KG,6001234500086,Consumables,,180.00,140.00,ZERO_RATED,EACH,24,100',
     '',
   ].join('\n');
 }

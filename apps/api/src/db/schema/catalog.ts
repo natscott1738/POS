@@ -11,6 +11,7 @@ export const categories = pgTable(
     parentId: uuid('parent_id'),
     qbIncomeAccountId: text('qb_income_account_id'),
     sortOrder: integer('sort_order').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

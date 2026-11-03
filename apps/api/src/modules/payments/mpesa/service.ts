@@ -18,6 +18,7 @@ export async function initiateStkPush(
   input: MpesaStkPushInput,
   userId: string,
 ): Promise<{ transactionId: string; checkoutRequestId: string; customerMessage: string }> {
+  const accountReference = env.MPESA_ACCOUNT_REFERENCE?.trim() || input.reference;
   const [record] = await db
     .insert(mpesaTransactions)
     .values({
@@ -29,7 +30,7 @@ export async function initiateStkPush(
       status: 'PENDING',
       amount: input.amount,
       phone: input.phone,
-      accountReference: input.reference,
+      accountReference,
       initiatedBy: userId,
       expiresAt: new Date(Date.now() + env.MPESA_STK_TIMEOUT_SECONDS * 1000),
     })
@@ -41,7 +42,7 @@ export async function initiateStkPush(
     const response = await stkPush({
       amountCents: input.amount,
       phone: input.phone,
-      accountReference: input.reference,
+      accountReference,
       description: input.description ?? `Payment ${input.reference}`,
       callbackUrl: `${env.PUBLIC_BASE_URL}/api/v1/webhooks/mpesa/stk/${env.MPESA_CALLBACK_TOKEN}`,
     });

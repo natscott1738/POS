@@ -127,6 +127,8 @@ const schema = z.object({
   MPESA_SHORTCODE: z.string().optional(),
   /** STK recipient; may differ from the go-live BusinessShortCode for a Till. */
   MPESA_PARTY_B: z.string().optional(),
+  /** Fixed Paybill account reference used in STK prompts when configured. */
+  MPESA_ACCOUNT_REFERENCE: z.string().max(12).optional(),
   MPESA_PASSKEY: z.string().optional(),
   /** Distinguishes till (CustomerBuyGoodsOnline) from paybill (CustomerPayBillOnline). */
   MPESA_TRANSACTION_TYPE: z

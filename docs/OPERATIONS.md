@@ -110,8 +110,9 @@ MPESA_ENABLED=true
 MPESA_ENVIRONMENT=production   # use sandbox while testing
 MPESA_SHORTCODE=            # BusinessShortCode used at Go-Live
 MPESA_PARTY_B=              # STK recipient; defaults to MPESA_SHORTCODE
+MPESA_ACCOUNT_REFERENCE=    # Paybill account number shown in STK prompt, if fixed
 MPESA_PASSKEY=              # from Daraja for this shortcode/product
-MPESA_TRANSACTION_TYPE=CustomerBuyGoodsOnline   # till; PayBill for paybill
+MPESA_TRANSACTION_TYPE=CustomerPayBillOnline     # Paybill; BuyGoods for till
 MPESA_CALLBACK_TOKEN=       # openssl rand -hex 24
 MPESA_ALLOWED_IPS=          # required for live M-PESA on a production server; optional in sandbox
 ```
@@ -122,7 +123,27 @@ Register this callback URL with Safaricom:
 https://<your-domain>/api/v1/webhooks/mpesa/stk/<MPESA_CALLBACK_TOKEN>
 ```
 
+For this Paybill, set `MPESA_SHORTCODE=522533`, leave `MPESA_PARTY_B` blank unless
+Safaricom instructs otherwise, set `MPESA_TRANSACTION_TYPE=CustomerPayBillOnline`,
+and set `MPESA_ACCOUNT_REFERENCE=7972068`. The account reference is also what a
+customer enters when they make a manual Paybill payment.
+
 Treat the token as a secret. Rotating it means re-registering the URL.
+
+For customers who pay manually from M-PESA to the Paybill, enable the Daraja
+Customer to Business (C2B) product and register both callback URLs against the
+live shortcode. This POS accepts the validation callback and stores C2B
+confirmations as unmatched payments for the cashier to attach to a sale:
+
+```
+https://<your-domain>/api/v1/webhooks/mpesa/c2b/validation/<MPESA_CALLBACK_TOKEN>
+https://<your-domain>/api/v1/webhooks/mpesa/c2b/confirmation/<MPESA_CALLBACK_TOKEN>
+```
+
+Use the production API host, not the Vercel frontend host. Keep the C2B `BillRefNumber`
+at `7972068` for this Paybill. The cashier still needs to claim the received
+payment in the POS; the callback does not automatically decide which sale it
+belongs to.
 
 ### When a payment goes missing
 
