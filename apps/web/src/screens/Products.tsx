@@ -39,6 +39,7 @@ export default function Products() {
   const { data: categories } = useApi<{ categories: Array<{ id: string; name: string; isActive: boolean }> }>('/catalog/categories');
   const [editing, setEditing] = useState<Product | 'new' | null>(null);
   const [pricing, setPricing] = useState<Variant | null>(null);
+  const [deleting, setDeleting] = useState<Product | null>(null);
   const [importing, setImporting] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -101,6 +102,9 @@ export default function Products() {
                 {can('product:write') && (
                   <button className="btn ghost" onClick={() => setEditing(product)}>Edit</button>
                 )}
+                {can('product:delete') && (
+                  <button className="btn danger" onClick={() => setDeleting(product)}>Delete</button>
+                )}
               </div>
 
               <table style={{ marginTop: 10 }}>
@@ -152,6 +156,13 @@ export default function Products() {
           onDone={() => { setEditing(null); void reload(); }}
         />
       )}
+      {deleting && (
+        <DeleteProductModal
+          product={deleting}
+          onClose={() => setDeleting(null)}
+          onDone={() => { setDeleting(null); void reload(); }}
+        />
+      )}
       {importing && <ImportProducts onClose={() => setImporting(false)} onDone={() => void reload()} />}
       {pricing && (
         <PriceChange
@@ -161,6 +172,41 @@ export default function Products() {
         />
       )}
     </Page>
+  );
+}
+
+function DeleteProductModal({
+  product,
+  onClose,
+  onDone,
+}: {
+  product: Product;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { busy, run } = useMutation();
+
+  return (
+    <Modal title={`Delete ${product.name}?`} onClose={onClose}>
+      <p>
+        This removes the product and its variants from the active catalogue and checkout. Existing
+        sales and price history are retained for records.
+      </p>
+      <div className="row">
+        <div className="spacer" />
+        <button className="btn ghost" disabled={busy} onClick={onClose}>Cancel</button>
+        <button
+          className="btn danger"
+          disabled={busy}
+          onClick={() => void run(() => api.del(`/catalog/products/${product.id}`), {
+            success: 'Product deleted',
+            onDone,
+          })}
+        >
+          Delete product
+        </button>
+      </div>
+    </Modal>
   );
 }
 
