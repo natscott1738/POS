@@ -24,6 +24,7 @@ interface CreditAccount {
 export default function Credit() {
   const can = useAuth((state) => state.can);
   const storeId = useAuth((state) => state.storeId);
+  const canCreateCustomer = useAuth((state) => state.can('customer:write'));
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'ALL' | 'OPEN' | 'OVERDUE' | 'CLOSED'>('ALL');
@@ -60,7 +61,7 @@ export default function Credit() {
 
       <div className="card" style={{ padding: 0 }}>
         {loading ? <Loading /> : (data?.accounts.length ?? 0) === 0 ? (
-          <Empty message={query ? 'No accounts match that search.' : 'No credit accounts yet. Open an account for an approved customer.'} />
+          <Empty message={query ? 'No accounts match that search.' : 'No credit accounts yet. Open an account for an existing customer or add a new customer.'} />
         ) : (
           <table>
             <thead><tr><th>Customer</th><th>Phone</th><th className="num">Balance due</th><th className="num">Overdue</th><th className="num">Limit</th><th className="num">Available</th><th className="num">Open invoices</th><th>Status</th><th /></tr></thead>
@@ -85,20 +86,33 @@ export default function Credit() {
         )}
       </div>
 
-      {creating && <CreateAccount storeId={storeId} onClose={() => setCreating(false)} onDone={() => { setCreating(false); void reload(); }} />}
+      {creating && <CreateAccount storeId={storeId} canCreateCustomer={canCreateCustomer} onClose={() => setCreating(false)} onDone={() => { setCreating(false); void reload(); }} />}
       {selected && <AccountDetail accountId={selected} canManage={can('credit:manage')} shiftId={useAuth.getState().shiftId} onClose={() => setSelected(null)} onChanged={() => void reload()} />}
     </Page>
   );
 }
 
-function CreateAccount({ storeId, onClose, onDone }: { storeId: string | null; onClose: () => void; onDone: () => void }) {
+function CreateAccount({ storeId, canCreateCustomer, onClose, onDone }: {
+  storeId: string | null;
+  canCreateCustomer: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
-  const [customerId, setCustomerId] = useState('');
-  const [customerName, setCustomerName] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState<{
+    id: string;
+    fullName: string;
+    phone: string | null;
+    isActive: boolean;
+  } | null>(null);
+  const [newCustomerName, setNewCustomerName] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
+  const [newCustomerEmail, setNewCustomerEmail] = useState('');
   const [limit, setLimit] = useState('');
   const [termsDays, setTermsDays] = useState('30');
-  const { data, loading } = useApi<{ customers: Array<{ id: string; fullName: string; phone: string | null }> }>(
+  const { data, loading } = useApi<{ customers: Array<{ id: string; fullName: string; phone: string | null; isActive: boolean }> }>(
     query ? `/customers?limit=50&q=${encodeURIComponent(query)}` : null,
     [query],
   );
@@ -107,26 +121,57 @@ function CreateAccount({ storeId, onClose, onDone }: { storeId: string | null; o
   return (
     <Modal title="Open credit account" onClose={onClose} wide>
       {!storeId && <div className="banner warning">Choose a store in till setup before opening an account.</div>}
-      <Field label="Find a customer" hint="Credit accounts are unique to a customer and store.">
-        <div className="row">
-          <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && setQuery(search.trim())} placeholder="Name, phone or email" />
-          <button className="btn" onClick={() => setQuery(search.trim())}>Find</button>
-        </div>
-      </Field>
-      {customerId ? (
-        <div className="row card" style={{ padding: 10, margin: '10px 0' }}>
-          <strong>{customerName}</strong><div className="spacer" />
-          <button className="btn ghost" onClick={() => { setCustomerId(''); setCustomerName(''); }}>Change</button>
-        </div>
-      ) : loading ? <Loading /> : data && (
-        <div className="card" style={{ padding: 0, maxHeight: 220, overflow: 'auto', margin: '10px 0' }}>
-          {data.customers.map((customer) => (
-            <button key={customer.id} className="btn ghost block" style={{ textAlign: 'left', borderRadius: 0 }} onClick={() => { setCustomerId(customer.id); setCustomerName(customer.fullName); }}>
-              {customer.fullName}<span className="muted" style={{ marginLeft: 10 }}>{customer.phone ?? ''}</span>
-            </button>
-          ))}
-          {data.customers.length === 0 && <Empty message="No customers found." />}
-        </div>
+      <div className="row" style={{ marginBottom: 12 }}>
+        <button className={`btn ${mode === 'existing' ? 'primary' : 'ghost'}`} onClick={() => setMode('existing')}>Existing customer</button>
+        {canCreateCustomer && <button className={`btn ${mode === 'new' ? 'primary' : 'ghost'}`} onClick={() => setMode('new')}>Add new customer</button>}
+      </div>
+      {mode === 'existing' ? (
+        <>
+          <Field label="Find a customer" hint="Credit accounts are unique to a customer and store.">
+            <div className="row">
+              <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && setQuery(search.trim())} placeholder="Name, phone or email" />
+              <button className="btn" onClick={() => setQuery(search.trim())}>Find</button>
+            </div>
+          </Field>
+          {selectedCustomer ? (
+            <div className="card" style={{ margin: '10px 0', padding: 10 }}>
+              <div className="row">
+                <strong>{selectedCustomer.fullName}</strong>
+                <span className="muted">{selectedCustomer.phone ?? 'No phone on file'}</span>
+                {!selectedCustomer.isActive && <Badge tone="warning">inactive</Badge>}
+                <div className="spacer" />
+                <button className="btn ghost" onClick={() => setSelectedCustomer(null)}>Change</button>
+              </div>
+              {!selectedCustomer.isActive && <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Opening this account will reactivate the customer profile for credit purchases.</div>}
+            </div>
+          ) : loading ? <Loading /> : data && (
+            <div className="card" style={{ padding: 0, maxHeight: 220, overflow: 'auto', margin: '10px 0' }}>
+              {data.customers.map((customer) => (
+                <button key={customer.id} className="btn ghost block" style={{ textAlign: 'left', borderRadius: 0 }} onClick={() => setSelectedCustomer(customer)}>
+                  {customer.fullName}<span className="muted" style={{ marginLeft: 10 }}>{customer.phone ?? ''}</span>
+                </button>
+              ))}
+              {data.customers.length === 0 && <Empty message="No customers found. Choose Add new customer to create a profile and account." />}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="banner warning" style={{ marginBottom: 12 }}>
+            Opening the account adds this person to Customers and activates credit up to the limit you set. Marketing consent remains off.
+          </div>
+          <FormGrid>
+            <Field label="Full name">
+              <input className="input" autoFocus value={newCustomerName} onChange={(event) => setNewCustomerName(event.target.value)} placeholder="Customer's name" />
+            </Field>
+            <Field label="Phone (optional)">
+              <input className="input mono" type="tel" value={newCustomerPhone} onChange={(event) => setNewCustomerPhone(event.target.value)} placeholder="07XX XXX XXX" />
+            </Field>
+            <Field label="Email (optional)">
+              <input className="input" type="email" value={newCustomerEmail} onChange={(event) => setNewCustomerEmail(event.target.value)} />
+            </Field>
+          </FormGrid>
+        </>
       )}
       <FormGrid>
         <Field label="Credit limit (KES)">
@@ -138,9 +183,21 @@ function CreateAccount({ storeId, onClose, onDone }: { storeId: string | null; o
       </FormGrid>
       <p className="muted" style={{ fontSize: 12 }}>Each account sale becomes a dated invoice. Payments apply to the oldest due invoice first.</p>
       <div className="row"><div className="spacer" /><button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={busy || !storeId || !customerId || Number(limit) <= 0} onClick={() => void run(
-          () => api.post('/credit/accounts', { customerId, storeId, creditLimit: Math.round(Number(limit) * 100), termsDays: Number(termsDays) }),
-          { success: 'Credit account opened', onDone },
+        <button className="btn primary" disabled={busy || !storeId || Number(limit) <= 0 || (mode === 'existing' ? !selectedCustomer : !canCreateCustomer || newCustomerName.trim().length < 2)} onClick={() => void run(
+          () => api.post('/credit/accounts', {
+            ...(mode === 'existing' && selectedCustomer ? { customerId: selectedCustomer.id } : {}),
+            ...(mode === 'new' ? {
+              newCustomer: {
+                fullName: newCustomerName.trim(),
+                phone: newCustomerPhone.trim() || null,
+                email: newCustomerEmail.trim() || null,
+              },
+            } : {}),
+            storeId,
+            creditLimit: Math.round(Number(limit) * 100),
+            termsDays: Number(termsDays),
+          }),
+          { success: mode === 'new' ? 'Customer and credit account created' : 'Credit account opened', onDone },
         )}>Open account</button>
       </div>
     </Modal>

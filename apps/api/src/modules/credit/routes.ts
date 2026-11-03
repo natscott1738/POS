@@ -13,7 +13,7 @@ import { db } from '../../db/client.js';
 import { creditAccounts, creditAllocations, creditTransactions, customers, shifts, payments, mpesaTransactions } from '../../db/schema/index.js';
 import { parseBody, parseParams, parseQuery } from '../../core/validation.js';
 import { assertStoreAccess, getAuth, requirePermissions, visibleStoreIds } from '../../auth/context.js';
-import { conflict, notFound } from '../../core/errors.js';
+import { conflict, forbidden, notFound } from '../../core/errors.js';
 import { isUniqueViolation, withIdempotency } from '../../core/idempotency.js';
 import { writeAudit } from '../../core/audit.js';
 import { allocationsForCharges, postCreditNote } from './service.js';
@@ -95,16 +95,60 @@ export async function creditRoutes(app: FastifyInstance): Promise<void> {
     const auth = getAuth(request);
     const input = parseBody(request, creditAccountCreateSchema);
     assertStoreAccess(request, input.storeId);
+    if (input.newCustomer && !auth.permissions.has('customer:write')) {
+      throw forbidden('You may not create a customer profile while opening a credit account');
+    }
 
     try {
-      const account = await db.transaction(async (tx) => {
+      const result = await db.transaction(async (tx) => {
+        let customerId = input.customerId;
+        let customerCreated = false;
+
+        if (input.newCustomer) {
+          const [createdCustomer] = await tx.insert(customers).values({
+            fullName: input.newCustomer.fullName,
+            phone: input.newCustomer.phone ?? null,
+            email: input.newCustomer.email ?? null,
+            isActive: true,
+            createdBy: auth.userId,
+          }).returning({ id: customers.id });
+          if (!createdCustomer) throw conflict('Could not create the customer profile');
+          customerId = createdCustomer.id;
+          customerCreated = true;
+
+          await writeAudit(tx, request, {
+            action: 'CUSTOMER_CREATED_FOR_CREDIT',
+            entityType: 'CUSTOMER',
+            entityId: customerId,
+            changes: {
+              fullName: input.newCustomer.fullName,
+              hasPhone: Boolean(input.newCustomer.phone),
+              hasEmail: Boolean(input.newCustomer.email),
+            },
+          });
+        }
+
+        if (!customerId) throw conflict('Choose a customer before opening the account');
+
         const [customer] = await tx.select({ id: customers.id, isActive: customers.isActive, deletedAt: customers.deletedAt })
-          .from(customers).where(eq(customers.id, input.customerId)).limit(1);
+          .from(customers).where(eq(customers.id, customerId)).limit(1).for('update');
         if (!customer || customer.deletedAt) throw notFound('Customer');
-        if (!customer.isActive) throw conflict('Activate the customer before opening a credit account');
+
+        // Opening an account is the manager's approval to use customer credit.
+        // Reactivate an existing profile so its new account can be used at checkout.
+        if (!customer.isActive) {
+          await tx.update(customers).set({ isActive: true, updatedAt: new Date() }).where(eq(customers.id, customerId));
+          await writeAudit(tx, request, {
+            action: 'CUSTOMER_REACTIVATED_FOR_CREDIT',
+            entityType: 'CUSTOMER',
+            entityId: customerId,
+            storeId: input.storeId,
+            changes: { isActive: true },
+          });
+        }
 
         const [existing] = await tx.select().from(creditAccounts)
-          .where(and(eq(creditAccounts.customerId, input.customerId), eq(creditAccounts.storeId, input.storeId)))
+          .where(and(eq(creditAccounts.customerId, customerId), eq(creditAccounts.storeId, input.storeId)))
           .limit(1).for('update');
         if (existing) {
           const [updated] = await tx.update(creditAccounts).set({
@@ -113,26 +157,36 @@ export async function creditRoutes(app: FastifyInstance): Promise<void> {
             isActive: true,
             updatedAt: new Date(),
           }).where(eq(creditAccounts.id, existing.id)).returning();
-          return updated!;
+          return { account: updated!, customerId, customerCreated };
         }
         const [created] = await tx.insert(creditAccounts).values({
-          customerId: input.customerId,
+          customerId,
           storeId: input.storeId,
           creditLimit: input.creditLimit,
           termsDays: input.termsDays,
           createdBy: auth.userId,
         }).returning();
         if (!created) throw conflict('Could not open a credit account');
-        return created;
+        return { account: created, customerId, customerCreated };
       });
 
       await writeAudit(db, request, {
-        action: 'CREDIT_ACCOUNT_OPENED', entityType: 'CREDIT_ACCOUNT', entityId: account.id,
-        storeId: input.storeId, changes: { customerId: input.customerId, creditLimit: input.creditLimit, termsDays: input.termsDays },
+        action: 'CREDIT_ACCOUNT_OPENED', entityType: 'CREDIT_ACCOUNT', entityId: result.account.id,
+        storeId: input.storeId, changes: {
+          customerId: result.customerId,
+          customerCreated: result.customerCreated,
+          creditLimit: input.creditLimit,
+          termsDays: input.termsDays,
+        },
       });
-      return reply.status(201).send({ account });
+      return reply.status(201).send({ account: result.account, customerCreated: result.customerCreated });
     } catch (err) {
-      if (isUniqueViolation(err)) throw conflict('A credit account already exists for this customer at this store');
+      if (isUniqueViolation(err)) {
+        if (input.newCustomer?.phone) {
+          throw conflict('A customer with that phone number already exists. Find the existing profile and open the account on it.');
+        }
+        throw conflict('A credit account already exists for this customer at this store');
+      }
       throw err;
     }
   });

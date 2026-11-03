@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { nonNegativeCents, positiveCents, safeText, uuid } from './common.js';
+import { customerSchema } from './customers.js';
 
 export const creditAccountsQuery = z.object({
   storeId: uuid.optional(),
@@ -9,10 +10,14 @@ export const creditAccountsQuery = z.object({
 });
 
 export const creditAccountCreateSchema = z.object({
-  customerId: uuid,
+  customerId: uuid.optional(),
+  newCustomer: customerSchema.pick({ fullName: true, phone: true, email: true }).optional(),
   storeId: uuid,
   creditLimit: positiveCents,
   termsDays: z.number().int().min(0).max(365).default(30),
+}).refine((value) => Boolean(value.customerId) !== Boolean(value.newCustomer), {
+  message: 'Choose an existing customer or provide details for a new one',
+  path: ['customerId'],
 });
 
 export const creditAccountUpdateSchema = z.object({
