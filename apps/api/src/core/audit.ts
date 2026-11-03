@@ -1,5 +1,5 @@
 import type { FastifyRequest } from 'fastify';
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte } from 'drizzle-orm';
 import { db, type Executor } from '../db/client.js';
 import { auditLogs } from '../db/schema/index.js';
 
@@ -41,6 +41,26 @@ export interface AuditEntry {
   terminalId?: string | null;
   overrideByUserId?: string | null;
 }
+
+/**
+ * Actions shown in the POS activity log. Security, integration, and maintenance
+ * events remain in the audit table for operational review, but are not part of
+ * the store's day-to-day POS history.
+ */
+const POS_AUDIT_ACTIONS = [
+  'USER_CREATED', 'USER_UPDATED', 'USER_DELETED',
+  'STORE_CREATED', 'TERMINAL_CREATED', 'PDQ_TERMINAL_CREATED', 'SETTING_UPDATED',
+  'OVERRIDE_GRANTED', 'OVERRIDE_FAILED',
+  'PRODUCT_CREATED', 'PRODUCT_UPDATED', 'PRODUCT_DELETED', 'PRICE_CHANGED',
+  'CATEGORY_CREATED', 'CATALOGUE_IMPORTED',
+  'STOCK_ADJUSTED', 'GOODS_RECEIVED', 'STOCK_COUNTED', 'STOCK_TRANSFERRED',
+  'CUSTOMER_CREATED', 'CUSTOMER_UPDATED', 'CUSTOMER_ERASED', 'LOYALTY_ADJUSTED',
+  'CUSTOMER_CREATED_FOR_CREDIT', 'CUSTOMER_REACTIVATED_FOR_CREDIT',
+  'CREDIT_ACCOUNT_OPENED', 'CREDIT_ACCOUNT_UPDATED', 'CREDIT_PAYMENT_RECEIVED', 'CREDIT_ADJUSTED',
+  'SALE_CREATED', 'SALE_PRICE_OVERRIDDEN', 'SALE_REFUNDED', 'SALE_VOIDED',
+  'SHIFT_OPENED', 'SHIFT_CLOSED', 'REPORT_EXPORTED',
+  'MPESA_STK_INITIATED', 'MPESA_MANUALLY_MATCHED', 'MPESA_PAYBILL_CLAIMED', 'PDQ_REVERSED',
+] as const;
 
 /**
  * Writes one append-only audit row. Pass a transaction handle so the audit record
@@ -86,7 +106,7 @@ export async function queryAuditLogs(filters: {
   to?: Date;
   limit: number;
 }) {
-  const conditions = [];
+  const conditions = [inArray(auditLogs.action, POS_AUDIT_ACTIONS)];
   if (filters.entityType) conditions.push(eq(auditLogs.entityType, filters.entityType));
   if (filters.entityId) conditions.push(eq(auditLogs.entityId, filters.entityId));
   if (filters.actorId) conditions.push(eq(auditLogs.actorId, filters.actorId));
@@ -96,7 +116,7 @@ export async function queryAuditLogs(filters: {
   return db
     .select()
     .from(auditLogs)
-    .where(conditions.length > 0 ? and(...conditions) : sql`true`)
+    .where(and(...conditions))
     .orderBy(desc(auditLogs.createdAt))
     .limit(filters.limit);
 }

@@ -19,7 +19,7 @@ export default function Admin() {
         {can('store:read') && <button className={tab === 'STORES' ? 'active' : ''} onClick={() => setTab('STORES')}>Stores</button>}
         {can('store:read') && <button className={tab === 'TERMINALS' ? 'active' : ''} onClick={() => setTab('TERMINALS')}>Tills</button>}
         {can('store:read') && <button className={tab === 'CARD' ? 'active' : ''} onClick={() => setTab('CARD')}>Card machines</button>}
-        {can('audit:read') && <button className={tab === 'AUDIT' ? 'active' : ''} onClick={() => setTab('AUDIT')}>Audit log</button>}
+        {can('audit:read') && <button className={tab === 'AUDIT' ? 'active' : ''} onClick={() => setTab('AUDIT')}>POS audit log</button>}
       </div>
 
       {tab === 'USERS' && <Users />}
@@ -565,24 +565,30 @@ function AuditLog() {
   const { data, loading } = useApi<{ logs: Array<Record<string, any>> }>('/admin/audit?limit=200');
 
   return (
-    <div className="card" style={{ padding: 0 }}>
-      {loading ? <Loading /> : (data?.logs.length ?? 0) === 0 ? <Empty message="Nothing recorded yet." /> : (
-        <table>
-          <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entity</th><th>Approved by</th><th>Reason</th></tr></thead>
-          <tbody>
-            {data?.logs.map((log) => (
-              <tr key={log.id}>
-                <td className="muted" style={{ fontSize: 13 }}>{new Date(log.createdAt).toLocaleString()}</td>
-                <td>{log.actorEmail ?? '—'}</td>
-                <td><Badge>{log.action.replace(/_/g, ' ').toLowerCase()}</Badge></td>
-                <td className="muted" style={{ fontSize: 12 }}>{log.entityType}</td>
-                <td>{log.overrideByUserId ? <Badge tone="warning">override</Badge> : '—'}</td>
-                <td className="muted" style={{ fontSize: 12 }}>{log.reason ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    <>
+      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+        POS changes to products, stock, sales, payments, customers, credit, and store setup. Sign-ins,
+        integrations, backups, and system-maintenance events are excluded.
+      </p>
+      <div className="card" style={{ padding: 0 }}>
+        {loading ? <Loading /> : (data?.logs.length ?? 0) === 0 ? <Empty message="No POS activity recorded yet." /> : (
+          <table>
+            <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entity</th><th>Approved by</th><th>Reason</th></tr></thead>
+            <tbody>
+              {data?.logs.map((log) => (
+                <tr key={log.id}>
+                  <td className="muted" style={{ fontSize: 13 }}>{new Date(log.createdAt).toLocaleString()}</td>
+                  <td>{log.actorEmail ?? '—'}</td>
+                  <td><Badge>{log.action.replace(/_/g, ' ').toLowerCase()}</Badge></td>
+                  <td className="muted" style={{ fontSize: 12 }}>{log.entityType}</td>
+                  <td>{log.overrideByUserId ? <Badge tone="warning">override</Badge> : '—'}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{log.reason ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
   );
 }
