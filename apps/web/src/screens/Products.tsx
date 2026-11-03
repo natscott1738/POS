@@ -4,7 +4,7 @@ import { api } from '../lib/api.js';
 import { useApi, useMutation } from '../lib/useApi.js';
 import { useAuth } from '../lib/store.js';
 import { Modal } from '../components/Modal.js';
-import { Page, Field, FormGrid, Empty, Loading, MoneyInput, QuantityInput, Badge } from '../components/ui.js';
+import { Page, Field, FormGrid, Empty, Loading, MoneyInput, Badge } from '../components/ui.js';
 import { formatQuantity } from '../components/Money.js';
 import ImportProducts from './ImportProducts.js';
 
@@ -153,6 +153,13 @@ export default function Products() {
           product={editing === 'new' ? null : editing}
           categories={categories?.categories ?? []}
           onClose={() => setEditing(null)}
+          canDelete={can('product:delete')}
+          onDelete={() => {
+            if (editing !== 'new') {
+              setDeleting(editing);
+              setEditing(null);
+            }
+          }}
           onDone={() => { setEditing(null); void reload(); }}
         />
       )}
@@ -213,27 +220,31 @@ function DeleteProductModal({
 interface DraftVariant {
   sku: string;
   barcode: string;
-  attributes: Record<string, string>;
-  unitPrice: number;
-  costPrice: number;
-  reorderPoint: number;
-  reorderQuantity: number;
+  label: string;
+  unitPrice: string;
+  costPrice: string;
+  reorderPoint: string;
+  reorderQuantity: string;
   isActive: boolean;
 }
 
 function blankVariant(): DraftVariant {
-  return { sku: '', barcode: '', attributes: {}, unitPrice: 0, costPrice: 0, reorderPoint: 0, reorderQuantity: 0, isActive: true };
+  return { sku: '', barcode: '', label: '', unitPrice: '', costPrice: '', reorderPoint: '', reorderQuantity: '', isActive: true };
 }
 
 function ProductForm({
   product,
   categories,
   onClose,
+  canDelete,
+  onDelete,
   onDone,
 }: {
   product: Product | null;
   categories: Array<{ id: string; name: string; isActive: boolean }>;
   onClose: () => void;
+  canDelete: boolean;
+  onDelete: () => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState(product?.name ?? '');
@@ -247,11 +258,11 @@ function ProductForm({
     product?.variants.map((v) => ({
       sku: v.sku,
       barcode: v.barcode ?? '',
-      attributes: v.attributes,
-      unitPrice: v.unitPrice,
-      costPrice: v.costPrice,
-      reorderPoint: v.reorderPoint,
-      reorderQuantity: v.reorderQuantity,
+      label: formatVariantLabel(v.attributes),
+      unitPrice: formatDraftDecimal(v.unitPrice, 2),
+      costPrice: formatDraftDecimal(v.costPrice, 2),
+      reorderPoint: formatDraftDecimal(v.reorderPoint, 3),
+      reorderQuantity: formatDraftDecimal(v.reorderQuantity, 3),
       isActive: v.isActive,
     })) ?? [blankVariant()],
   );
@@ -273,11 +284,11 @@ function ProductForm({
       variants: variants.map((v) => ({
         sku: v.sku.trim(),
         barcode: v.barcode.trim() || null,
-        attributes: v.attributes,
-        unitPrice: v.unitPrice,
-        costPrice: v.costPrice,
-        reorderPoint: v.reorderPoint,
-        reorderQuantity: v.reorderQuantity,
+        attributes: parseVariantLabel(v.label),
+        unitPrice: parseDraftDecimal(v.unitPrice, 2),
+        costPrice: parseDraftDecimal(v.costPrice, 2),
+        reorderPoint: parseDraftDecimal(v.reorderPoint, 3),
+        reorderQuantity: parseDraftDecimal(v.reorderQuantity, 3),
         isActive: v.isActive,
       })),
     };
@@ -302,7 +313,12 @@ function ProductForm({
 
   const valid =
     name.trim().length > 1 &&
-    (editing || variants.every((v) => v.sku.trim().length > 1 && v.unitPrice >= 0));
+    (editing || variants.every((v) =>
+      v.sku.trim().length > 1 &&
+      isValidDraftDecimal(v.unitPrice, 2) &&
+      isValidDraftDecimal(v.costPrice, 2) &&
+      isValidDraftDecimal(v.reorderPoint, 3),
+    ));
 
   return (
     <Modal title={editing ? `Edit ${product.name}` : 'New product'} onClose={onClose} wide>
@@ -376,18 +392,36 @@ function ProductForm({
                   <input
                     className="input"
                     placeholder="e.g. Size: M"
-                    value={Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(', ')}
-                    onChange={(e) => updateVariant(setVariants, index, { attributes: parseAttributes(e.target.value) })}
+                    value={variant.label}
+                    onChange={(e) => updateVariant(setVariants, index, { label: e.target.value })}
                   />
                 </Field>
                 <Field label="Selling price">
-                  <MoneyInput value={variant.unitPrice} onChange={(cents) => updateVariant(setVariants, index, { unitPrice: cents })} />
+                  <input
+                    className="input mono"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={variant.unitPrice}
+                    onChange={(e) => updateVariant(setVariants, index, { unitPrice: e.target.value })}
+                  />
                 </Field>
                 <Field label="Cost price">
-                  <MoneyInput value={variant.costPrice} onChange={(cents) => updateVariant(setVariants, index, { costPrice: cents })} />
+                  <input
+                    className="input mono"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={variant.costPrice}
+                    onChange={(e) => updateVariant(setVariants, index, { costPrice: e.target.value })}
+                  />
                 </Field>
                 <Field label="Reorder at">
-                  <QuantityInput value={variant.reorderPoint} onChange={(milli) => updateVariant(setVariants, index, { reorderPoint: milli })} />
+                  <input
+                    className="input mono"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={variant.reorderPoint}
+                    onChange={(e) => updateVariant(setVariants, index, { reorderPoint: e.target.value })}
+                  />
                 </Field>
               </FormGrid>
               {variants.length > 1 && (
@@ -408,6 +442,9 @@ function ProductForm({
       )}
 
       <div className="row" style={{ marginTop: 12 }}>
+        {editing && canDelete && (
+          <button className="btn danger" onClick={onDelete}>Delete product</button>
+        )}
         <div className="spacer" />
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn primary" disabled={busy || !valid} onClick={save}>
@@ -434,6 +471,40 @@ function parseAttributes(text: string): Record<string, string> {
     if (key?.trim() && value) result[key.trim()] = value;
   }
   return result;
+}
+
+function formatVariantLabel(attributes: Record<string, string>): string {
+  return Object.entries(attributes).map(([key, value]) => `${key}: ${value}`).join(', ');
+}
+
+function parseVariantLabel(label: string): Record<string, string> {
+  const trimmed = label.trim();
+  if (!trimmed) return {};
+  const parsed = parseAttributes(trimmed);
+  return Object.keys(parsed).length > 0 ? parsed : { Variant: trimmed };
+}
+
+/** Convert the text draft into the integer scale used by the API. */
+function parseDraftDecimal(value: string, decimalPlaces: number): number {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  const [whole = '0', fraction = ''] = trimmed.split('.');
+  const scale = 10 ** decimalPlaces;
+  const fractionalUnits = Number((fraction + '0'.repeat(decimalPlaces)).slice(0, decimalPlaces));
+  return Number(whole || '0') * scale + fractionalUnits;
+}
+
+function formatDraftDecimal(value: number, decimalPlaces: number): string {
+  if (value === 0) return '';
+  return (value / (10 ** decimalPlaces)).toFixed(decimalPlaces);
+}
+
+function isValidDraftDecimal(value: string, decimalPlaces: number): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) return false;
+  const fraction = trimmed.split('.')[1] ?? '';
+  return fraction.length <= decimalPlaces && Number.isSafeInteger(parseDraftDecimal(trimmed, decimalPlaces));
 }
 
 /**
