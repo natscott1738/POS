@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import { useApi, useMutation } from '../lib/useApi.js';
 import { useAuth, toast } from '../lib/store.js';
 import { Modal } from '../components/Modal.js';
+import { PasswordInput } from '../components/PasswordInput.js';
 import { Page, Field, FormGrid, Empty, Loading, Badge } from '../components/ui.js';
 
 type Tab = 'USERS' | 'STORES' | 'TERMINALS' | 'CARD' | 'AUDIT';
@@ -174,9 +175,11 @@ function UserForm({
           </select>
         </Field>
         {!editing && (
-          <Field label="Temporary password" hint="At least 12 characters. They must change it on first sign-in.">
-            <input className="input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </Field>
+          <div className="field">
+            <label className="label" htmlFor="temporary-password">Temporary password</label>
+            <PasswordInput id="temporary-password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+            <span className="muted" style={{ fontSize: 12 }}>At least 12 characters. They must change it on first sign-in.</span>
+          </div>
         )}
         <Field label="Till staff code" hint="Short code used at the till, e.g. CSH002">
           <input className="input mono" value={staffCode} onChange={(e) => setStaffCode(e.target.value.toUpperCase())} />

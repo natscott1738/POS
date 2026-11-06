@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api.js';
 import { useAuth, toast, type SessionUser } from '../lib/store.js';
 import { getMeta, setMeta } from '../lib/db.js';
+import { PasswordInput } from '../components/PasswordInput.js';
 
 interface AuthResponse {
   accessToken: string;
@@ -179,10 +180,8 @@ function PasswordForm({
       </div>
       <div className="field">
         <label className="label" htmlFor="password">Password</label>
-        <input
+        <PasswordInput
           id="password"
-          className="input"
-          type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
@@ -284,10 +283,8 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
       </div>
       <div className="field">
         <label className="label" htmlFor="new-password">New password</label>
-        <input
+        <PasswordInput
           id="new-password"
-          className="input"
-          type="password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           autoComplete="new-password"
